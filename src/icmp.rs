@@ -1,4 +1,5 @@
 use crate::packet;
+use crate::util;
 
 #[repr(C)]
 struct ICMPHeader {
@@ -18,15 +19,17 @@ fn get_icmp_header(pkt: &mut packet::NetworkPacket) -> &ICMPHeader {
     header
 }
 
-pub fn icmp_recv(pkt: &mut packet::NetworkPacket) {
+pub fn icmp_recv(pkt: &mut packet::NetworkPacket, source_ip: u32) {
+    let checksum = util::compute_checksum(&pkt.data[pkt.offset as usize..pkt.length as usize]);
     let header = get_icmp_header(pkt);
 
     println!("icmp_recv");
     println!("type = {:02x}", header.pkttype);
     println!("code = {:02x}", header.code);
-    println!("checksum = {:04x}", header.checksum);
+    println!("checksum = {:04x}", checksum);
 
     if header.pkttype == ICMP_ECHO_REQUEST {
+        println!("echo request from {:4x}", source_ip);
         // XXX Send a response
     }
 }

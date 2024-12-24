@@ -2,6 +2,7 @@ mod netif;
 mod packet;
 mod ip;
 mod icmp;
+mod util;
 
 fn print_binary(buffer: &[u8]) {
     for (i, byte) in buffer.iter().enumerate() {
