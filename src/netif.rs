@@ -17,11 +17,7 @@ pub fn init() {
 }
 
 pub fn recv_packet() -> packet::NetworkPacket {
-    let mut pkt = packet::NetworkPacket {
-        data: [0; 2048],
-        length: 0
-    };
-
+    let mut pkt = packet::alloc();
     unsafe {
         pkt.length = tun_recv(pkt.data.as_mut_ptr(), pkt.data.len() as i32);
     }
@@ -29,8 +25,8 @@ pub fn recv_packet() -> packet::NetworkPacket {
     pkt
 }
 
-pub fn send_packet(pkt: packet::NetworkPacket) {
+pub fn send_packet(pkt: &mut packet::NetworkPacket) {
     unsafe {
-        tun_send(pkt.data.as_ptr(), pkt.length as i32);
+        tun_send(pkt.data.as_ptr().add(pkt.offset as usize), pkt.length - pkt.offset);
     }
 }
