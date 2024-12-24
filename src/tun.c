@@ -28,7 +28,7 @@ int tun_init(const char *remote_ip_addr) {
     }
 
     memset(&ifr, 0, sizeof(ifr));
-    ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
+    ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
     err = ioctl(tun_fd, TUNSETIFF, (void*) &ifr);
     if (err < 0) {
         printf("ioctl error: %d\n", err);
