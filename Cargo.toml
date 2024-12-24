@@ -1,0 +1,16 @@
+[package]
+name = "netstack"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+
+[build-dependencies]
+cc = "1.0"
+
+[[bin]]
+name = "netstack"
+path = "src/main.rs"
+
+[build]
+script = "build.rs"

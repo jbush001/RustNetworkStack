@@ -2,11 +2,11 @@ Install Rust: <https://www.rust-lang.org/tools/install>
 
 Build
 
-    ./build.sh
+    cargo build
 
 This must be run using Sudo
 
-    $ sudo ./main
+    $ sudo ./target/debug/netstack
 
 Now try pinging this from another terminal. This will fail because this device does not support ARP:
 
@@ -21,5 +21,3 @@ Now try pinging this from another terminal. This will fail because this device d
     ff ff ff ff ff ff be 6e 72 7d db 21 08 06 00 01 08 00 06 04 00 01 be 6e 72 7d db 21 64 73 5c ce 00 00 00 00 00 00 0a 00 00 01
     ff ff ff ff ff ff be 6e 72 7d db 21 08 06 00 01 08 00 06 04 00 01 be 6e 72 7d db 21 64 73 5c ce 00 00 00 00 00 00 0a 00 00 01
     ff ff ff ff ff ff be 6e 72 7d db 21 08 06 00 01 08 00 06 04 00 01 be 6e 72 7d db 21 64 73 5c ce 00 00 00 00 00 00 0a 00 00 01
-
-

@@ -1,5 +1,9 @@
 
-
+// This create a device that will appear in the host as a network interface.
+// It will set up an IP route so that any packets sent to 10.0.0.1 will
+// be routed to this program and readable via the tun_recv function.
+// Likewise, any packets sent from this will be received byt he host network
+// stack as if they came from a remote machine.
 // https://www.kernel.org/doc/Documentation/networking/tuntap.txt
 
 #include <fcntl.h>
@@ -12,9 +16,8 @@
 #include <unistd.h>
 
 static int tun_fd;
-static const char *ADDRESS = "10.0.0.1";
 
-int tun_init() {
+int tun_init(const char *remote_ip_addr) {
     struct ifreq ifr;
     int err;
     char command_line[256];
@@ -35,7 +38,8 @@ int tun_init() {
 
     sprintf(command_line, "ip link set dev %s up", ifr.ifr_name);
     system(command_line);
-    sprintf(command_line, "ip route add dev %s %s", ifr.ifr_name, ADDRESS);
+    sprintf(command_line, "ip route add dev %s %d.%d.%d.%d", ifr.ifr_name,
+        remote_ip_addr[0], remote_ip_addr[1], remote_ip_addr[2], remote_ip_addr[3]);
     system(command_line);
 
     return 0;
