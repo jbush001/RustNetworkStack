@@ -21,3 +21,22 @@ pub fn compute_checksum(buffer: &[u8]) -> u16 {
 
     (checksum ^ 0xffff) as u16
 }
+
+pub fn get_be16(buffer: &[u8]) -> u16 {
+    (((buffer[0] as u16) << 8) | buffer[1] as u16) as u16
+}
+
+pub fn get_be32(buffer: &[u8]) -> u32 {
+    ((buffer[0] as u32) << 24) |
+    ((buffer[1] as u32) << 16) |
+    ((buffer[2] as u32) << 8) |
+    buffer[0] as u32
+}
+
+pub fn ip_to_str(addr: u32) -> String {
+    format!("{}.{}.{}.{}",
+        (addr >> 24) & 0xff,
+        (addr >> 16) & 0xff,
+        (addr >> 8) & 0xff,
+        addr & 0xff)
+}

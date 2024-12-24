@@ -1,35 +1,28 @@
 use crate::packet;
 use crate::util;
 
-#[repr(C)]
-struct ICMPHeader {
-    pkttype: u8,
-    code: u8,
-    checksum: u16
-}
+//    0               1               2               3
+//    +---------------+---------------+-----+-------------------------+
+//  0 |     Type      |     Code      |          Checksum             |
+//    +---------------+---------------+-------------------------------+
+//  4 |                     Payload...                                |
+//    +---------------------------------------------------------------+
+
 
 const ICMP_ECHO_REQUEST: u8 = 8;
 
-fn get_icmp_header(pkt: &mut packet::NetworkPacket) -> &ICMPHeader {
-    let header = unsafe {
-        &*(pkt.data.as_ptr().add(pkt.offset as usize) as *const ICMPHeader)
-    };
+pub fn icmp_recv(pkt: packet::NetworkPacket, source_ip: u32) {
+    let payload = &pkt.data[pkt.offset as usize..pkt.length as usize];
+    let checksum = util::compute_checksum(&payload);
+    if checksum != 0 {
+        print!("ICMP checksum error");
+        return;
+    }
 
-    pkt.offset += std::mem::size_of::<ICMPHeader>() as i32;
-    header
-}
-
-pub fn icmp_recv(pkt: &mut packet::NetworkPacket, source_ip: u32) {
-    let checksum = util::compute_checksum(&pkt.data[pkt.offset as usize..pkt.length as usize]);
-    let header = get_icmp_header(pkt);
-
-    println!("icmp_recv");
-    println!("type = {:02x}", header.pkttype);
-    println!("code = {:02x}", header.code);
-    println!("checksum = {:04x}", checksum);
-
-    if header.pkttype == ICMP_ECHO_REQUEST {
+    let packet_type = payload[0];
+    if packet_type == ICMP_ECHO_REQUEST {
         println!("echo request from {:4x}", source_ip);
         // XXX Send a response
     }
 }
+

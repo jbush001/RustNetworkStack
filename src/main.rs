@@ -19,9 +19,9 @@ fn main() {
     netif::init();
 
     loop  {
-        let mut pkt = netif::recv_packet();
+        let pkt = netif::recv_packet();
         println!("Received packet ({} bytes):", pkt.length);
         print_binary(&pkt.data[..pkt.length as usize]);
-        ip::ip_recv(&mut pkt);
+        ip::ip_recv(pkt);
     }
 }
