@@ -1,4 +1,5 @@
 mod netif;
+mod packet;
 
 fn print_binary(buffer: &[u8]) {
     for (i, byte) in buffer.iter().enumerate() {
@@ -14,15 +15,9 @@ fn print_binary(buffer: &[u8]) {
 fn main() {
     netif::init();
 
-    let mut buffer = [0u8; 2048];
-
     loop  {
-        let length = netif::recv_packet(&mut buffer);
-        if length < 0 {
-            break;
-        }
-
-        println!("Received packet ({} bytes):", length);
-        print_binary(&buffer[..length as usize]);
+        let pkt = netif::recv_packet();
+        println!("Received packet ({} bytes):", pkt.length);
+        print_binary(&pkt.data[..pkt.length as usize]);
     }
 }
