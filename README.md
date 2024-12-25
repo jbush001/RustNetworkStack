@@ -21,7 +21,12 @@ Now try pinging this from another terminal.
     64 bytes from 10.0.0.2: icmp_seq=3 ttl=64 time=1.01 ms
     64 bytes from 10.0.0.2: icmp_seq=4 ttl=64 time=2.10 ms
 
-Can also run tcpdump in another window to monitor traffic (this has to be invoked after netstack is
-running, otherwise the interface will not exist)
+Can also run tcpdump in another window to monitor traffic (this has to be
+invoked after netstack is running, otherwise the interface will not exist).
 
     sudo tcpdump -i tun0 -v
+
+TCP is only a stub, but the beginnings of the 3-way handshake can be
+demonstrated by:
+
+    wget http://10.0.0.2

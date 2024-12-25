@@ -18,6 +18,7 @@ mod netif;
 mod buf;
 mod ip;
 mod icmp;
+mod tcp;
 mod util;
 
 fn main() {

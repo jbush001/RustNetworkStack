@@ -16,10 +16,13 @@
 
 use crate::buf;
 use crate::icmp;
+use crate::tcp;
 use crate::util;
 use crate::netif;
 
 pub const PROTO_ICMP: u8 = 1;
+pub const PROTO_TCP: u8 = 6;
+
 const IP_HEADER_LEN: u32 = 20;
 static mut next_packet_id: u16 = 0;
 const DEFAULT_TTL : u8 = 64;
@@ -64,8 +67,10 @@ pub fn ip_recv(mut packet: buf::NetBuffer) {
     println!("Dest addr {}", util::ip_to_str(dest_addr));
     packet.offset += header_len;
 
-    if protocol == PROTO_ICMP {
-        icmp::icmp_recv(packet, source_addr);
+    match protocol {
+        PROTO_ICMP => icmp::icmp_recv(packet, source_addr),
+        PROTO_TCP => tcp::tcp_recv(packet, source_addr),
+        _ => println!("Unkonwn protocol {}", protocol)
     }
 }
 
