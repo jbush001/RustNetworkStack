@@ -15,7 +15,7 @@
 //
 
 mod netif;
-mod packet;
+mod buf;
 mod ip;
 mod icmp;
 mod util;
@@ -24,9 +24,9 @@ fn main() {
     netif::init();
 
     loop  {
-        let pkt = netif::recv_packet();
-        println!("Received packet ({} bytes):", pkt.length);
-        util::print_binary(&pkt.data[..pkt.length as usize]);
-        ip::ip_recv(pkt);
+        let packet = netif::recv_packet();
+        println!("Received buf ({} bytes):", packet.length);
+        util::print_binary(&packet.data[..packet.length as usize]);
+        ip::ip_recv(packet);
     }
 }

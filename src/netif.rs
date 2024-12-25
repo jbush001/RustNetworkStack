@@ -16,7 +16,8 @@
 
 // Wrappers for the C functions in tun.c
 
-use crate::packet;
+use crate::buf;
+use crate::util;
 
 extern {
     fn tun_init() -> i32;
@@ -24,7 +25,7 @@ extern {
     fn tun_send(buffer: *const u8, length: i32) -> i32;
 }
 
-const LOCAL_IP: u32 = 0x0a000002; // 10.0.0.2
+const LOCAL_IP: util::IPv4Addr = 0x0a000002; // 10.0.0.2
 
 pub fn init() {
     unsafe {
@@ -32,21 +33,21 @@ pub fn init() {
     }
 }
 
-pub fn recv_packet() -> packet::NetworkPacket {
-    let mut pkt = packet::alloc();
+pub fn recv_packet() -> buf::NetBuffer {
+    let mut packet = buf::alloc();
     unsafe {
-        pkt.length = tun_recv(pkt.data.as_mut_ptr(), pkt.data.len() as i32) as u32;
+        packet.length = tun_recv(packet.data.as_mut_ptr(), packet.data.len() as i32) as u32;
     }
 
-    pkt
+    packet
 }
 
-pub fn send_packet(pkt: packet::NetworkPacket) {
+pub fn send_packet(packet: buf::NetBuffer) {
     unsafe {
-        tun_send(pkt.data.as_ptr().add(pkt.offset as usize), (pkt.length - pkt.offset) as i32);
+        tun_send(packet.data.as_ptr().add(packet.offset as usize), (packet.length - packet.offset) as i32);
     }
 }
 
-pub fn get_ipaddr() -> u32 {
+pub fn get_ipaddr() -> util::IPv4Addr {
     return LOCAL_IP;
 }

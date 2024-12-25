@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-use crate::packet;
+use crate::buf;
 use crate::icmp;
 use crate::util;
 use crate::netif;
@@ -40,8 +40,8 @@ const DEFAULT_TTL : u8 = 64;
 // 20 |                    Options                    |    Padding    |
 //    +-----------------------------------------------+---------------+
 
-pub fn ip_recv(mut pkt: packet::NetworkPacket) {
-    let payload = &pkt.data[pkt.offset as usize..pkt.length as usize];
+pub fn ip_recv(mut packet: buf::NetBuffer) {
+    let payload = &packet.data[packet.offset as usize..packet.length as usize];
     let version = (payload[0] as u8) >> 4;
     if version != 4 {
         return;
@@ -54,7 +54,7 @@ pub fn ip_recv(mut pkt: packet::NetworkPacket) {
     }
 
     let header_len = ((payload[0] as u8) & 0xf) as u32;
-    pkt.offset += header_len * 4;
+    packet.offset += header_len * 4;
     let protocol = payload[9] as u8;
     let source_addr = util::get_be32(&payload[12..16]);
     let dest_addr = util::get_be32(&payload[16..20]);
@@ -65,17 +65,17 @@ pub fn ip_recv(mut pkt: packet::NetworkPacket) {
     println!("Dest addr {}", util::ip_to_str(dest_addr));
 
     if protocol == PROTO_ICMP {
-        icmp::icmp_recv(pkt, source_addr);
+        icmp::icmp_recv(packet, source_addr);
     }
 }
 
-pub fn ip_send(mut pkt: packet::NetworkPacket, protocol: u8, dest_addr: u32) {
-    assert!(pkt.offset > IP_HEADER_LEN);
-    pkt.offset -= IP_HEADER_LEN;
-    let payload = &mut pkt.data[pkt.offset as usize..pkt.length as usize];
+pub fn ip_send(mut packet: buf::NetBuffer, protocol: u8, dest_addr: util::IPv4Addr) {
+    assert!(packet.offset > IP_HEADER_LEN);
+    packet.offset -= IP_HEADER_LEN;
+    let payload = &mut packet.data[packet.offset as usize..packet.length as usize];
 
     payload[0] = 0x45; // Version/IHL
-    util::set_be16(&mut payload[2..4], (pkt.length - pkt.offset) as u16); // Total Length
+    util::set_be16(&mut payload[2..4], (packet.length - packet.offset) as u16); // Total Length
 
     unsafe {
         util::set_be16(&mut payload[4..6], next_packet_id); // ID
@@ -90,5 +90,5 @@ pub fn ip_send(mut pkt: packet::NetworkPacket, protocol: u8, dest_addr: u32) {
     let checksum = util::compute_checksum(payload);
     util::set_be16(&mut payload[10..12], checksum);
 
-    netif::send_packet(pkt);
+    netif::send_packet(packet);
 }

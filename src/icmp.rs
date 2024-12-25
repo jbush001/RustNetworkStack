@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-use crate::packet;
+use crate::buf;
 use crate::util;
 use crate::ip;
 
@@ -32,8 +32,8 @@ const ICMP_ECHO_REPLY: u8 = 0;
 const ICMP_HEADER_LEN: u32 = 4;
 
 
-pub fn icmp_recv(pkt: packet::NetworkPacket, source_ip: u32) {
-    let payload = &pkt.data[pkt.offset as usize..pkt.length as usize];
+pub fn icmp_recv(packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
+    let payload = &packet.data[packet.offset as usize..packet.length as usize];
     let checksum = util::compute_checksum(&payload);
     if checksum != 0 {
         print!("ICMP checksum error");
@@ -43,9 +43,9 @@ pub fn icmp_recv(pkt: packet::NetworkPacket, source_ip: u32) {
     let packet_type = payload[0];
     if packet_type == ICMP_ECHO_REQUEST {
         // Send a response
-        let body = &pkt.data[(pkt.offset + ICMP_HEADER_LEN) as usize..pkt.length as usize];
+        let body = &packet.data[(packet.offset + ICMP_HEADER_LEN) as usize..packet.length as usize];
 
-        let mut new_packet = packet::NetworkPacket {
+        let mut new_packet = buf::NetBuffer {
             data: [0; 2048],
             length: (64 + body.len()) as u32,
             offset: 64
@@ -56,13 +56,13 @@ pub fn icmp_recv(pkt: packet::NetworkPacket, source_ip: u32) {
     }
 }
 
-pub fn icmp_send(mut pkt: packet::NetworkPacket, packet_type: u8, dest_addr: u32) {
-    assert!(pkt.offset > ICMP_HEADER_LEN);
-    pkt.offset -= ICMP_HEADER_LEN;
-    let payload = &mut pkt.data[pkt.offset as usize..pkt.length as usize];
+pub fn icmp_send(mut packet: buf::NetBuffer, packet_type: u8, dest_addr: util::IPv4Addr) {
+    assert!(packet.offset > ICMP_HEADER_LEN);
+    packet.offset -= ICMP_HEADER_LEN;
+    let payload = &mut packet.data[packet.offset as usize..packet.length as usize];
     payload[0] = packet_type;
     let checksum = util::compute_checksum(payload);
     util::set_be16(&mut payload[2..4], checksum);
-    ip::ip_send(pkt, ip::PROTO_ICMP, dest_addr);
+    ip::ip_send(packet, ip::PROTO_ICMP, dest_addr);
 }
 

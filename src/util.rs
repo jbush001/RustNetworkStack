@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+pub type IPv4Addr = u32;
+
 // Compute one's complement sum, per RFV 1071
 // https://datatracker.ietf.org/doc/html/rfc1071
 pub fn compute_checksum(buffer: &[u8]) -> u16 {
@@ -59,7 +61,7 @@ pub fn set_be32(buffer: &mut [u8], value: u32) {
     buffer[3] = (value & 0xff) as u8;
 }
 
-pub fn ip_to_str(addr: u32) -> String {
+pub fn ip_to_str(addr: IPv4Addr) -> String {
     format!("{}.{}.{}.{}",
         (addr >> 24) & 0xff,
         (addr >> 16) & 0xff,

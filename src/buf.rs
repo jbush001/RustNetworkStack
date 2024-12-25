@@ -14,14 +14,14 @@
 // limitations under the License.
 //
 
-pub struct NetworkPacket {
+pub struct NetBuffer {
     pub data: [u8; 2048],
     pub length: u32,
     pub offset: u32,
 }
 
-pub fn alloc() -> NetworkPacket {
-    NetworkPacket {
+pub fn alloc() -> NetBuffer {
+    NetBuffer {
         data: [0; 2048],
         length: 0,
         offset: 0
