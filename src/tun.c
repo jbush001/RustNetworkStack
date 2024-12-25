@@ -51,12 +51,19 @@ int tun_init() {
         return -1;
     }
 
+    // Mark the interface as being ready.
     sprintf(command_line, "ip link set dev %s up", ifr.ifr_name);
     printf("%s\n", command_line);
     system(command_line);
+
+    // Ensure anything sent to the 10.0.0.x subnet gets routed to our TUN driver.
+    // Our address is hardcoded in netif.rs as 10.0.0.2.
     sprintf(command_line, "ip route add dev %s 10.0.0.0/24", ifr.ifr_name);
     printf("%s\n", command_line);
     system(command_line);
+
+    // Local address of this interface as seen on the virtual network
+    // This is the address our stack will see packets from the host as coming from.
     sprintf(command_line, "ip addr add dev %s local 10.0.0.1", ifr.ifr_name);
     printf("%s\n", command_line);
     system(command_line);

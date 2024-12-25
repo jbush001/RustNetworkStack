@@ -66,3 +66,14 @@ pub fn ip_to_str(addr: u32) -> String {
         (addr >> 8) & 0xff,
         addr & 0xff)
 }
+
+pub fn print_binary(buffer: &[u8]) {
+    for (i, byte) in buffer.iter().enumerate() {
+        print!("{:02x} ", byte);
+        if i % 16 == 15 {
+            println!();
+        }
+    }
+
+    println!();
+}

@@ -17,7 +17,6 @@
 // Wrappers for the C functions in tun.c
 
 use crate::packet;
-use crate::util;
 
 extern {
     fn tun_init() -> i32;
@@ -25,13 +24,11 @@ extern {
     fn tun_send(buffer: *const u8, length: i32) -> i32;
 }
 
-const LOCAL_IP: [u8; 4] = [10, 0, 0, 2];
-static mut ip_packed: u32 = 0;
+const LOCAL_IP: u32 = 0x0a000002; // 10.0.0.2
 
 pub fn init() {
     unsafe {
         tun_init();
-        ip_packed = util::get_be32(&LOCAL_IP[0..4]);
     }
 }
 
@@ -51,5 +48,5 @@ pub fn send_packet(pkt: packet::NetworkPacket) {
 }
 
 pub fn get_ipaddr() -> u32 {
-    return unsafe { ip_packed };
+    return LOCAL_IP;
 }

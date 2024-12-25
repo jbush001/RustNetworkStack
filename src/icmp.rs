@@ -51,10 +51,7 @@ pub fn icmp_recv(pkt: packet::NetworkPacket, source_ip: u32) {
             offset: 64
         };
 
-        for i in 0..body.len() {
-            new_packet.data[new_packet.offset as usize + i] = body[i];
-        }
-
+        new_packet.data[new_packet.offset as usize..new_packet.offset as usize + body.len()].copy_from_slice(body);
         icmp_send(new_packet, ICMP_ECHO_REPLY, source_ip);
     }
 }
