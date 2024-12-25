@@ -36,7 +36,13 @@ pub fn init() {
 pub fn recv_packet() -> buf::NetBuffer {
     let mut packet = buf::alloc();
     unsafe {
-        packet.length = tun_recv(packet.data.as_mut_ptr(), packet.data.len() as i32) as u32;
+        let result = tun_recv(packet.data.as_mut_ptr(), packet.data.len() as i32);
+        if result <= 0 {
+            println!("Error {} reading from TUN interface", result);
+            std::process::exit(1);
+        }
+
+        packet.length = result as u32;
     }
 
     packet
@@ -44,7 +50,12 @@ pub fn recv_packet() -> buf::NetBuffer {
 
 pub fn send_packet(packet: buf::NetBuffer) {
     unsafe {
-        tun_send(packet.data.as_ptr().add(packet.offset as usize), (packet.length - packet.offset) as i32);
+        let result = tun_send(packet.data.as_ptr().add(packet.offset as usize),
+            (packet.length - packet.offset) as i32);
+        if result <= 0 {
+            println!("Error {} writing to TUN interface", result);
+            std::process::exit(1);
+        }
     }
 }
 

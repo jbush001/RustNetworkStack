@@ -32,8 +32,8 @@ const ICMP_ECHO_REPLY: u8 = 0;
 const ICMP_HEADER_LEN: u32 = 4;
 
 
-pub fn icmp_recv(packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
-    let payload = &packet.data[packet.offset as usize..packet.length as usize];
+pub fn icmp_recv(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
+    let payload = packet.payload();
     let checksum = util::compute_checksum(&payload);
     if checksum != 0 {
         print!("ICMP checksum error");
@@ -43,15 +43,17 @@ pub fn icmp_recv(packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     let packet_type = payload[0];
     if packet_type == ICMP_ECHO_REQUEST {
         // Send a response
-        let body = &packet.data[(packet.offset + ICMP_HEADER_LEN) as usize..packet.length as usize];
-
         let mut new_packet = buf::NetBuffer {
             data: [0; 2048],
-            length: (64 + body.len()) as u32,
+            length: 64,
             offset: 64
         };
 
-        new_packet.data[new_packet.offset as usize..new_packet.offset as usize + body.len()].copy_from_slice(body);
+        packet.offset += ICMP_HEADER_LEN;
+        let icmp_data = packet.payload();
+        new_packet.data[new_packet.offset as usize..new_packet.offset as usize + icmp_data.len()]
+            .copy_from_slice(icmp_data);
+        new_packet.length += icmp_data.len() as u32;
         icmp_send(new_packet, ICMP_ECHO_REPLY, source_ip);
     }
 }
@@ -59,7 +61,7 @@ pub fn icmp_recv(packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
 pub fn icmp_send(mut packet: buf::NetBuffer, packet_type: u8, dest_addr: util::IPv4Addr) {
     assert!(packet.offset > ICMP_HEADER_LEN);
     packet.offset -= ICMP_HEADER_LEN;
-    let payload = &mut packet.data[packet.offset as usize..packet.length as usize];
+    let payload = packet.mut_payload();
     payload[0] = packet_type;
     let checksum = util::compute_checksum(payload);
     util::set_be16(&mut payload[2..4], checksum);

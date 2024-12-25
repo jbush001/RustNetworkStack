@@ -26,7 +26,7 @@ fn main() {
     loop  {
         let packet = netif::recv_packet();
         println!("Received buf ({} bytes):", packet.length);
-        util::print_binary(&packet.data[..packet.length as usize]);
+        util::print_binary(packet.payload());
         ip::ip_recv(packet);
     }
 }

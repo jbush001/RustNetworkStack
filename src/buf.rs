@@ -27,3 +27,13 @@ pub fn alloc() -> NetBuffer {
         offset: 0
     }
 }
+
+impl NetBuffer {
+    pub fn payload(&self) -> &[u8] {
+        &self.data[self.offset as usize..self.length as usize]
+    }
+
+    pub fn mut_payload(&mut self) -> &mut [u8] {
+        &mut self.data[self.offset as usize..self.length as usize]
+    }
+}

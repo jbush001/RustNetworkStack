@@ -41,7 +41,7 @@ const DEFAULT_TTL : u8 = 64;
 //    +-----------------------------------------------+---------------+
 
 pub fn ip_recv(mut packet: buf::NetBuffer) {
-    let payload = &packet.data[packet.offset as usize..packet.length as usize];
+    let payload = packet.payload();
     let version = (payload[0] as u8) >> 4;
     if version != 4 {
         return;
@@ -54,7 +54,6 @@ pub fn ip_recv(mut packet: buf::NetBuffer) {
     }
 
     let header_len = ((payload[0] as u8) & 0xf) as u32;
-    packet.offset += header_len * 4;
     let protocol = payload[9] as u8;
     let source_addr = util::get_be32(&payload[12..16]);
     let dest_addr = util::get_be32(&payload[16..20]);
@@ -63,6 +62,7 @@ pub fn ip_recv(mut packet: buf::NetBuffer) {
     println!("Protocol {}", protocol);
     println!("Source addr {}", util::ip_to_str(source_addr));
     println!("Dest addr {}", util::ip_to_str(dest_addr));
+    packet.offset += header_len * 4;
 
     if protocol == PROTO_ICMP {
         icmp::icmp_recv(packet, source_addr);
@@ -72,10 +72,11 @@ pub fn ip_recv(mut packet: buf::NetBuffer) {
 pub fn ip_send(mut packet: buf::NetBuffer, protocol: u8, dest_addr: util::IPv4Addr) {
     assert!(packet.offset > IP_HEADER_LEN);
     packet.offset -= IP_HEADER_LEN;
-    let payload = &mut packet.data[packet.offset as usize..packet.length as usize];
+    let packet_length = (packet.length - packet.offset) as u16;
+    let payload = packet.mut_payload();
 
     payload[0] = 0x45; // Version/IHL
-    util::set_be16(&mut payload[2..4], (packet.length - packet.offset) as u16); // Total Length
+    util::set_be16(&mut payload[2..4], packet_length); // Total Length
 
     unsafe {
         util::set_be16(&mut payload[4..6], next_packet_id); // ID
