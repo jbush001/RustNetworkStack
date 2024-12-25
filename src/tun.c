@@ -33,48 +33,47 @@
 static int tun_fd;
 
 int tun_init() {
-    struct ifreq ifr;
-    int err;
-    char command_line[256];
-
     tun_fd = open("/dev/net/tun", O_RDWR);
     if (tun_fd < 0 ) {
+        printf("Error %d opening TUN device\n", tun_fd);
         return -1;
     }
 
+    struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
     ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
-    err = ioctl(tun_fd, TUNSETIFF, (void*) &ifr);
+    int err = ioctl(tun_fd, TUNSETIFF, (void*) &ifr);
     if (err < 0) {
-        printf("ioctl error: %d\n", err);
+        printf("TUNSETIFF error: %d\n", err);
         close(tun_fd);
         return -1;
     }
 
-    // Mark the interface as being ready.
+    char command_line[256];
+
+    // Indicate the interface is up.
     sprintf(command_line, "ip link set dev %s up", ifr.ifr_name);
-    printf("%s\n", command_line);
     system(command_line);
 
-    // Ensure anything sent to the 10.0.0.x subnet gets routed to our TUN driver.
-    // Our address is hardcoded in netif.rs as 10.0.0.2.
+    // Configure so anything sent from the host to the 10.0.0.x subnet gets
+    // routed to our TUN driver. Our address is hardcoded in netif.rs as
+    // 10.0.0.2.
     sprintf(command_line, "ip route add dev %s 10.0.0.0/24", ifr.ifr_name);
-    printf("%s\n", command_line);
     system(command_line);
 
-    // Local address of this interface as seen on the virtual network
-    // This is the address our stack will see packets from the host as coming from.
+    // Address of the host on the virtual network.
+    // This is the address our stack will see packets from the host will come
+    // from.
     sprintf(command_line, "ip addr add dev %s local 10.0.0.1", ifr.ifr_name);
-    printf("%s\n", command_line);
     system(command_line);
 
     return 0;
 }
 
-int tun_recv(void *buffer, int length) {
+int tun_recv(void *buffer, unsigned int length) {
     return read(tun_fd, buffer, length);
 }
 
-int tun_send(const void *buffer, int length) {
+int tun_send(const void *buffer, unsigned int length) {
     return write(tun_fd, buffer, length);
 }
