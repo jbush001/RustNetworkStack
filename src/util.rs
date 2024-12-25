@@ -30,7 +30,19 @@ pub fn get_be32(buffer: &[u8]) -> u32 {
     ((buffer[0] as u32) << 24) |
     ((buffer[1] as u32) << 16) |
     ((buffer[2] as u32) << 8) |
-    buffer[0] as u32
+    buffer[3] as u32
+}
+
+pub fn set_be16(buffer: &mut [u8], value: u16) {
+    buffer[0] = ((value >> 8) & 0xff) as u8;
+    buffer[1] = (value & 0xff) as u8;
+}
+
+pub fn set_be32(buffer: &mut [u8], value: u32) {
+    buffer[0] = ((value >> 24) & 0xff) as u8;
+    buffer[1] = ((value >> 16) & 0xff) as u8;
+    buffer[2] = ((value >> 8) & 0xff) as u8;
+    buffer[3] = (value & 0xff) as u8;
 }
 
 pub fn ip_to_str(addr: u32) -> String {

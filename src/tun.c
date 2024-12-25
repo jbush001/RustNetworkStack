@@ -17,7 +17,7 @@
 
 static int tun_fd;
 
-int tun_init(const char *remote_ip_addr) {
+int tun_init() {
     struct ifreq ifr;
     int err;
     char command_line[256];
@@ -37,9 +37,13 @@ int tun_init(const char *remote_ip_addr) {
     }
 
     sprintf(command_line, "ip link set dev %s up", ifr.ifr_name);
+    printf("%s\n", command_line);
     system(command_line);
-    sprintf(command_line, "ip route add dev %s %d.%d.%d.%d", ifr.ifr_name,
-        remote_ip_addr[0], remote_ip_addr[1], remote_ip_addr[2], remote_ip_addr[3]);
+    sprintf(command_line, "ip route add dev %s 10.0.0.0/24", ifr.ifr_name);
+    printf("%s\n", command_line);
+    system(command_line);
+    sprintf(command_line, "ip addr add dev %s local 10.0.0.1", ifr.ifr_name);
+    printf("%s\n", command_line);
     system(command_line);
 
     return 0;

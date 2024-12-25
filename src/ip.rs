@@ -1,8 +1,12 @@
 use crate::packet;
 use crate::icmp;
 use crate::util;
+use crate::netif;
 
-const PROTO_ICMP: u8 = 1;
+pub const PROTO_ICMP: u8 = 1;
+const IP_HEADER_LEN: u32 = 20;
+static mut next_packet_id: u16 = 0;
+const DEFAULT_TTL : u8 = 64;
 
 
 //    0               1               2               3
@@ -33,7 +37,7 @@ pub fn ip_recv(mut pkt: packet::NetworkPacket) {
         return;
     }
 
-    let header_len = ((payload[0] as u8) & 0xf) as i32;
+    let header_len = ((payload[0] as u8) & 0xf) as u32;
     pkt.offset += header_len * 4;
     let protocol = payload[9] as u8;
     let source_addr = util::get_be32(&payload[12..16]);
@@ -47,4 +51,28 @@ pub fn ip_recv(mut pkt: packet::NetworkPacket) {
     if protocol == PROTO_ICMP {
         icmp::icmp_recv(pkt, source_addr);
     }
+}
+
+pub fn ip_send(mut pkt: packet::NetworkPacket, protocol: u8, dest_addr: u32) {
+    assert!(pkt.offset > IP_HEADER_LEN);
+    pkt.offset -= IP_HEADER_LEN;
+    let payload = &mut pkt.data[pkt.offset as usize..pkt.length as usize];
+
+    payload[0] = 0x45; // Version/IHL
+    util::set_be16(&mut payload[2..4], (pkt.length - pkt.offset) as u16); // Total Length
+
+    unsafe {
+        util::set_be16(&mut payload[4..6], next_packet_id); // ID
+        next_packet_id += 1;
+    }
+
+    payload[8] = DEFAULT_TTL; // TTL
+    payload[9] = protocol; // Protocol
+    util::set_be32(&mut payload[12..16], netif::get_ipaddr()); // Source Address
+    util::set_be32(&mut payload[16..24], dest_addr); // Destination Address
+
+    let checksum = util::compute_checksum(payload);
+    util::set_be16(&mut payload[10..12], checksum);
+
+    netif::send_packet(pkt);
 }

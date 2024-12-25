@@ -2,8 +2,8 @@
 
 pub struct NetworkPacket {
     pub data: [u8; 2048],
-    pub length: i32,
-    pub offset: i32,
+    pub length: u32,
+    pub offset: u32,
 }
 
 pub fn alloc() -> NetworkPacket {
