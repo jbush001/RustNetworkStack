@@ -16,10 +16,11 @@
 
 mod netif;
 mod buf;
-mod ip;
-mod icmp;
-mod tcp;
+mod ipv4;
+mod icmpv4;
+mod tcpv4;
 mod util;
+mod udpv4;
 
 fn main() {
     netif::init();
@@ -28,6 +29,6 @@ fn main() {
         let packet = netif::recv_packet();
         println!("Received buf ({} bytes):", packet.length);
         util::print_binary(packet.payload());
-        ip::ip_recv(packet);
+        ipv4::ip_recv(packet);
     }
 }

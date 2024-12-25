@@ -15,13 +15,15 @@
 //
 
 use crate::buf;
-use crate::icmp;
-use crate::tcp;
+use crate::icmpv4;
+use crate::tcpv4;
 use crate::util;
 use crate::netif;
+use crate::udpv4;
 
 pub const PROTO_ICMP: u8 = 1;
 pub const PROTO_TCP: u8 = 6;
+pub const PROTO_UDP: u8 = 17;
 
 const IP_HEADER_LEN: u32 = 20;
 static mut next_packet_id: u16 = 0;
@@ -68,8 +70,9 @@ pub fn ip_recv(mut packet: buf::NetBuffer) {
     packet.offset += header_len;
 
     match protocol {
-        PROTO_ICMP => icmp::icmp_recv(packet, source_addr),
-        PROTO_TCP => tcp::tcp_recv(packet, source_addr),
+        PROTO_ICMP => icmpv4::icmp_recv(packet, source_addr),
+        PROTO_TCP => tcpv4::tcp_recv(packet, source_addr),
+        PROTO_UDP => udpv4::udp_recv(packet, source_addr),
         _ => println!("Unkonwn protocol {}", protocol)
     }
 }

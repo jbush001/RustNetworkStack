@@ -16,7 +16,7 @@
 
 use crate::buf;
 use crate::util;
-use crate::ip;
+use crate::ipv4;
 
 //    0               1               2               3
 //    +---------------+---------------+-----+-------------------------+
@@ -65,6 +65,6 @@ pub fn icmp_send(mut packet: buf::NetBuffer, packet_type: u8, dest_addr: util::I
     payload[0] = packet_type;
     let checksum = util::compute_checksum(payload);
     util::set_be16(&mut payload[2..4], checksum);
-    ip::ip_send(packet, ip::PROTO_ICMP, dest_addr);
+    ipv4::ip_send(packet, ipv4::PROTO_ICMP, dest_addr);
 }
 
