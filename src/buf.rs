@@ -36,4 +36,8 @@ impl NetBuffer {
     pub fn mut_payload(&mut self) -> &mut [u8] {
         &mut self.data[self.offset as usize..self.length as usize]
     }
+
+    pub fn payload_len(&self) -> usize {
+        (self.length - self.offset) as usize
+    }
 }

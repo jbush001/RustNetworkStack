@@ -51,7 +51,7 @@ pub fn recv_packet() -> buf::NetBuffer {
 pub fn send_packet(packet: buf::NetBuffer) {
     unsafe {
         let result = tun_send(packet.data.as_ptr().add(packet.offset as usize),
-            (packet.length - packet.offset) as i32);
+            packet.payload_len() as i32);
         if result <= 0 {
             println!("Error {} writing to TUN interface", result);
             std::process::exit(1);
