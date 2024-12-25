@@ -1,6 +1,6 @@
 Install Rust: <https://www.rust-lang.org/tools/install>
 
-Optionally also install:
+Install other utilities:
 
     sudo apt install tcpdump
 
@@ -8,7 +8,7 @@ Build
 
     cargo build
 
-This must be run using Sudo
+This must be run using sudo
 
     $ sudo ./target/debug/netstack
 
