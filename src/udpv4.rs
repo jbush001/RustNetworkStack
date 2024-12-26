@@ -17,6 +17,48 @@
 use crate::buf;
 use crate::ipv4;
 use crate::util;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use lazy_static::lazy_static;
+
+pub struct UDPSocket {
+    receive_queue: Vec<(util::IPv4Addr, u16, buf::NetBuffer)>,
+    port: u16,
+}
+
+lazy_static! {
+    static ref PORT_MAP: Mutex<HashMap<u16, Arc<Mutex<UDPSocket>>>> = Mutex::new(HashMap::new());
+}
+
+impl UDPSocket {
+    pub fn new(port: u16) -> Arc<Mutex<UDPSocket>> {
+        let socket = UDPSocket {
+            receive_queue: Vec::new(),
+            port: port,
+        };
+
+        let handle = Arc::new(Mutex::new(socket));
+        PORT_MAP.lock().unwrap().insert(port, handle.clone());
+        handle
+    }
+
+    pub fn receive(&mut self) -> Option<(util::IPv4Addr, u16, Vec<u8>)> {
+        let entry = self.receive_queue.pop();
+        if entry.is_none() {
+            return None;
+        }
+
+        let (source_addr, source_port, buf) = entry.unwrap();
+        Some((source_addr, source_port, buf.payload().to_vec()))
+    }
+
+    pub fn send(&mut self, dest_addr: util::IPv4Addr, dest_port: u16, data: &[u8]) {
+        let mut packet = buf::NetBuffer::new();
+        packet.append_from_slice(data);
+        udp_send(packet, dest_addr, self.port, dest_port);
+    }
+}
+
 
 //    0               1               2               3
 //    +-------------------------------+-------------------------------+
@@ -39,8 +81,14 @@ pub fn udp_recv(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
     println!("Source port {} dest port {}", source_port, dest_port);
     println!("Length {}", length);
 
-    // XXX hack: respond to packet
-    udp_send(packet, source_addr, dest_port, source_port);
+    let mut port_map_guard = PORT_MAP.lock().unwrap();
+    let socket = port_map_guard.get_mut(&dest_port);
+    if socket.is_none() {
+        println!("No socket listening on port {}", dest_port);
+        return;
+    }
+
+    socket.unwrap().lock().unwrap().receive_queue.push((source_addr, source_port, packet));
 }
 
 fn udp_send(

@@ -25,10 +25,20 @@ mod util;
 fn main() {
     netif::init();
 
+    let socket = udpv4::UDPSocket::new(8000);
     loop {
         let packet = netif::recv_packet();
         println!("Received buf ({} bytes):", packet.length);
         util::print_binary(packet.payload());
         ipv4::ip_recv(packet);
+
+        let mut sock_guard = socket.lock().unwrap();
+        let recv = sock_guard.receive();
+        if recv.is_some() {
+            let (source_addr, source_port, data) = recv.unwrap();
+            println!("Received UDP packet from {}:{} ({} bytes)", source_addr, source_port, data.len());
+            util::print_binary(&data);
+            sock_guard.send(source_addr, source_port, &data);
+        }
     }
 }

@@ -73,7 +73,7 @@ impl NetBuffer {
         self.offset += size;
     }
 
-    pub fn append_data(&mut self, data: &[u8]) {
+    pub fn append_from_slice(&mut self, data: &[u8]) {
         assert!(self.length + data.len() < self.data.len());
         self.data[self.offset..self.offset + data.len()].copy_from_slice(data);
         self.length += data.len();
@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn test_add_header() {
         let mut buf = NetBuffer::new();
-        buf.append_data([0xaa, 0xbb, 0xcc, 0xdd, 0xee].as_slice());
+        buf.append_from_slice([0xaa, 0xbb, 0xcc, 0xdd, 0xee].as_slice());
         {
             assert!(buf.payload_len() == 5);
             let payload = buf.payload();

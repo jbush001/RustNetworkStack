@@ -43,7 +43,7 @@ pub fn icmp_recv(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     if packet_type == ICMP_ECHO_REQUEST {
         // Send a response
         let mut response = buf::NetBuffer::new();
-        response.append_data(packet.payload());
+        response.append_from_slice(packet.payload());
         icmp_send(response, ICMP_ECHO_REPLY, source_ip);
     }
 }
