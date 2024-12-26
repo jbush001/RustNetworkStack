@@ -19,6 +19,7 @@ use crate::ipv4;
 use crate::util;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::sync::Condvar;
 use lazy_static::lazy_static;
 
 pub struct UDPSocket {
@@ -28,6 +29,11 @@ pub struct UDPSocket {
 
 lazy_static! {
     static ref PORT_MAP: Mutex<HashMap<u16, Arc<Mutex<UDPSocket>>>> = Mutex::new(HashMap::new());
+
+    // This is not ideal, as it wakes up all threads waiting for data any time there
+    // is actitiy on any socket. But we get into all kinds of reference/ownership
+    // complexity if we try to associate a condition with each socket.
+    static ref RECV_WAIT: Condvar = Condvar::new();
 }
 
 impl UDPSocket {
@@ -42,20 +48,24 @@ impl UDPSocket {
         handle
     }
 
-    pub fn receive(&mut self) -> Option<(util::IPv4Addr, u16, Vec<u8>)> {
-        let entry = self.receive_queue.pop();
-        if entry.is_none() {
-            return None;
-        }
-
-        let (source_addr, source_port, buf) = entry.unwrap();
-        Some((source_addr, source_port, buf.payload().to_vec()))
-    }
-
     pub fn send(&mut self, dest_addr: util::IPv4Addr, dest_port: u16, data: &[u8]) {
         let mut packet = buf::NetBuffer::new();
         packet.append_from_slice(data);
         udp_send(packet, dest_addr, self.port, dest_port);
+    }
+}
+
+pub fn udp_read(socket: &mut Arc<Mutex<UDPSocket>>) -> (util::IPv4Addr, u16, Vec<u8>) {
+    let mut guard = socket.lock().unwrap();
+    loop {
+        let entry = guard.receive_queue.pop();
+        if !entry.is_none() {
+            let (source_addr, source_port, buf) = entry.unwrap();
+            return (source_addr, source_port, buf.payload().to_vec());
+        }
+
+        // Need to wait for more data
+        guard = RECV_WAIT.wait(guard).unwrap();
     }
 }
 
@@ -89,6 +99,7 @@ pub fn udp_recv(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
     }
 
     socket.unwrap().lock().unwrap().receive_queue.push((source_addr, source_port, packet));
+    RECV_WAIT.notify_all();
 }
 
 fn udp_send(

@@ -22,23 +22,26 @@ mod tcpv4;
 mod udpv4;
 mod util;
 
-fn main() {
-    netif::init();
-
-    let socket = udpv4::UDPSocket::new(8000);
+fn packet_receive_thread() {
     loop {
         let packet = netif::recv_packet();
         println!("Received buf ({} bytes):", packet.length);
         util::print_binary(packet.payload());
         ipv4::ip_recv(packet);
+    }
+}
 
-        let mut sock_guard = socket.lock().unwrap();
-        let recv = sock_guard.receive();
-        if recv.is_some() {
-            let (source_addr, source_port, data) = recv.unwrap();
-            println!("Received UDP packet from {}:{} ({} bytes)", source_addr, source_port, data.len());
-            util::print_binary(&data);
-            sock_guard.send(source_addr, source_port, &data);
-        }
+fn main() {
+    netif::init();
+    std::thread::spawn(move || {
+        packet_receive_thread();
+    });
+
+    let mut socket = udpv4::UDPSocket::new(8000);
+    loop {
+        let (source_addr, source_port, data) = udpv4::udp_read(&mut socket);
+        println!("Received UDP packet from {}:{} ({} bytes)", source_addr, source_port, data.len());
+        util::print_binary(&data);
+        socket.lock().unwrap().send(source_addr, source_port, &data);
     }
 }
