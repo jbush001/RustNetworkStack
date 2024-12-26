@@ -14,18 +14,18 @@
 // limitations under the License.
 //
 
-mod netif;
 mod buf;
-mod ipv4;
 mod icmpv4;
+mod ipv4;
+mod netif;
 mod tcpv4;
-mod util;
 mod udpv4;
+mod util;
 
 fn main() {
     netif::init();
 
-    loop  {
+    loop {
         let packet = netif::recv_packet();
         println!("Received buf ({} bytes):", packet.length);
         util::print_binary(packet.payload());

@@ -27,7 +27,7 @@ impl NetBuffer {
         NetBuffer {
             data: [0; 2048],
             offset: DEFAULT_HEADER_LEN, // Reserve space for headers
-            length: DEFAULT_HEADER_LEN
+            length: DEFAULT_HEADER_LEN,
         }
     }
 
@@ -49,9 +49,11 @@ impl NetBuffer {
             // (plus a little more space)
             let grow_size = size + 32;
             unsafe {
-                std::ptr::copy(self.data.as_ptr().add(self.offset),
+                std::ptr::copy(
+                    self.data.as_ptr().add(self.offset),
                     self.data.as_mut_ptr().add(self.offset + grow_size),
-                    self.length - self.offset);
+                    self.length - self.offset,
+                );
             }
             self.offset += grow_size;
             self.length += grow_size;
@@ -73,15 +75,12 @@ impl NetBuffer {
 
     pub fn append_data(&mut self, data: &[u8]) {
         assert!(self.length + data.len() < self.data.len());
-        self.data[self.offset..self.offset + data.len()]
-            .copy_from_slice(data);
+        self.data[self.offset..self.offset + data.len()].copy_from_slice(data);
         self.length += data.len();
     }
 }
 
 mod tests {
-    use super::*;
-
     #[test]
     fn test_add_header() {
         let mut buf = NetBuffer::new();

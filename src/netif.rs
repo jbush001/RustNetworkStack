@@ -19,7 +19,7 @@
 use crate::buf;
 use crate::util;
 
-extern {
+extern "C" {
     fn tun_init() -> i32;
     fn tun_recv(buffer: *mut u8, length: usize) -> i32;
     fn tun_send(buffer: *const u8, length: usize) -> i32;
@@ -51,8 +51,10 @@ pub fn recv_packet() -> buf::NetBuffer {
 
 pub fn send_packet(packet: buf::NetBuffer) {
     unsafe {
-        let result = tun_send(packet.data.as_ptr().add(packet.offset),
-            packet.payload_len());
+        let result = tun_send(
+            packet.data.as_ptr().add(packet.offset),
+            packet.payload_len(),
+        );
         if result <= 0 {
             println!("Error {} writing to TUN interface", result);
             std::process::exit(1);

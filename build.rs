@@ -20,7 +20,5 @@ use cc;
 // code.
 fn main() {
     println!("cargo::rerun-if-changed=src/tun.c");
-    cc::Build::new()
-        .file("src/tun.c")
-        .compile("tun");
+    cc::Build::new().file("src/tun.c").compile("tun");
 }

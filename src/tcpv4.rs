@@ -34,7 +34,6 @@ use crate::util;
 //    +---------------------------------------------------------------+
 //
 
-
 pub fn tcp_recv(packet: buf::NetBuffer, _source_ip: util::IPv4Addr) {
     println!("Got TCP packet");
 
@@ -53,13 +52,12 @@ pub fn tcp_recv(packet: buf::NetBuffer, _source_ip: util::IPv4Addr) {
     println!("source port {} dest port {}", source_port, dest_port);
     println!("sequence {} ack {}", seq_num, ack_num);
     println!("window {}", window);
-    println!("Flags {}{}{}{}{}",
-        if ack != 0 {"A"} else {"-"},
-        if psh != 0 {"P"} else {"-"},
-        if rst != 0 {"R"} else {"-"},
-        if syn != 0 {"S"} else {"-"},
-        if fin != 0 {"F"} else {"-"});
+    println!(
+        "Flags {}{}{}{}{}",
+        if ack != 0 { "A" } else { "-" },
+        if psh != 0 { "P" } else { "-" },
+        if rst != 0 { "R" } else { "-" },
+        if syn != 0 { "S" } else { "-" },
+        if fin != 0 { "F" } else { "-" }
+    );
 }
-
-
-

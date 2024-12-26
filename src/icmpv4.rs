@@ -15,8 +15,8 @@
 //
 
 use crate::buf;
-use crate::util;
 use crate::ipv4;
+use crate::util;
 
 //    0               1               2               3
 //    +---------------+---------------+-----+-------------------------+
@@ -25,12 +25,10 @@ use crate::ipv4;
 //  4 |                     Payload...                                |
 //    +---------------------------------------------------------------+
 
-
 const ICMP_ECHO_REQUEST: u8 = 8;
 const ICMP_ECHO_REPLY: u8 = 0;
 
 const ICMP_HEADER_LEN: usize = 4;
-
 
 pub fn icmp_recv(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     let payload = packet.payload();
@@ -58,4 +56,3 @@ pub fn icmp_send(mut packet: buf::NetBuffer, packet_type: u8, dest_addr: util::I
     util::set_be16(&mut payload[2..4], checksum);
     ipv4::ip_send(packet, ipv4::PROTO_ICMP, dest_addr);
 }
-

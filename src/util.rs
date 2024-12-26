@@ -43,10 +43,10 @@ pub fn get_be16(buffer: &[u8]) -> u16 {
 }
 
 pub fn get_be32(buffer: &[u8]) -> u32 {
-    ((buffer[0] as u32) << 24) |
-    ((buffer[1] as u32) << 16) |
-    ((buffer[2] as u32) << 8) |
-    buffer[3] as u32
+    ((buffer[0] as u32) << 24)
+        | ((buffer[1] as u32) << 16)
+        | ((buffer[2] as u32) << 8)
+        | buffer[3] as u32
 }
 
 pub fn set_be16(buffer: &mut [u8], value: u16) {
@@ -62,11 +62,13 @@ pub fn set_be32(buffer: &mut [u8], value: u32) {
 }
 
 pub fn ip_to_str(addr: IPv4Addr) -> String {
-    format!("{}.{}.{}.{}",
+    format!(
+        "{}.{}.{}.{}",
         (addr >> 24) & 0xff,
         (addr >> 16) & 0xff,
         (addr >> 8) & 0xff,
-        addr & 0xff)
+        addr & 0xff
+    )
 }
 
 pub fn print_binary(buffer: &[u8]) {

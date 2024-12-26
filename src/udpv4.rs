@@ -15,20 +15,17 @@
 //
 
 use crate::buf;
-use crate::util;
 use crate::ipv4;
+use crate::util;
 
-const UDP_HEADER_LEN: usize = 8;
-
-//
 //    0               1               2               3
 //    +-------------------------------+-------------------------------+
 //  0 |         Source Port           |          Dest Port            |
 //    +-------------------------------+-------------------------------+
 //  4 |            Length             |           Checksum            |
 //    +-------------------------------+-------------------------------+
-//
 
+const UDP_HEADER_LEN: usize = 8;
 
 pub fn udp_recv(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
     println!("Got UDP packet");
@@ -46,7 +43,12 @@ pub fn udp_recv(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
     udp_send(packet, source_addr, dest_port, source_port);
 }
 
-fn udp_send(mut packet: buf::NetBuffer, dest_addr: util::IPv4Addr, source_port: u16, dest_port: u16) {
+fn udp_send(
+    mut packet: buf::NetBuffer,
+    dest_addr: util::IPv4Addr,
+    source_port: u16,
+    dest_port: u16,
+) {
     packet.add_header(UDP_HEADER_LEN);
     let length = packet.payload_len() as u16;
     let payload = packet.mut_payload();

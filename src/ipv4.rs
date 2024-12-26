@@ -16,10 +16,10 @@
 
 use crate::buf;
 use crate::icmpv4;
-use crate::tcpv4;
-use crate::util;
 use crate::netif;
+use crate::tcpv4;
 use crate::udpv4;
+use crate::util;
 
 pub const PROTO_ICMP: u8 = 1;
 pub const PROTO_TCP: u8 = 6;
@@ -27,8 +27,7 @@ pub const PROTO_UDP: u8 = 17;
 
 const IP_HEADER_LEN: usize = 20;
 static mut NEXT_PACKET_ID: u16 = 0;
-const DEFAULT_TTL : u8 = 64;
-
+const DEFAULT_TTL: u8 = 64;
 
 //    0               1               2               3
 //    +-------+-------+---------------+-------------------------------+
@@ -73,7 +72,7 @@ pub fn ip_recv(mut packet: buf::NetBuffer) {
         PROTO_ICMP => icmpv4::icmp_recv(packet, source_addr),
         PROTO_TCP => tcpv4::tcp_recv(packet, source_addr),
         PROTO_UDP => udpv4::udp_recv(packet, source_addr),
-        _ => println!("Unkonwn protocol {}", protocol)
+        _ => println!("Unkonwn protocol {}", protocol),
     }
 }
 
