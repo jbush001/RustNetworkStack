@@ -45,6 +45,10 @@ Build
 
     cargo build
 
+Run unit tests:
+
+    cargo test
+
 The network stack must be run with root privileges, as the TUN device is
 not accessible to regular users. It's probably possible to make configuration
 changes to avoid that, but I haven't bothered.

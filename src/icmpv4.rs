@@ -44,17 +44,9 @@ pub fn icmp_recv(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     packet.remove_header(ICMP_HEADER_LEN);
     if packet_type == ICMP_ECHO_REQUEST {
         // Send a response
-        let mut new_packet = buf::NetBuffer {
-            data: [0; 2048],
-            length: 64,
-            offset: 64
-        };
-
-        let icmp_data = packet.payload();
-        new_packet.data[new_packet.offset..new_packet.offset + icmp_data.len()]
-            .copy_from_slice(icmp_data);
-        new_packet.length += icmp_data.len();
-        icmp_send(new_packet, ICMP_ECHO_REPLY, source_ip);
+        let mut response = buf::NetBuffer::new();
+        response.append_data(packet.payload());
+        icmp_send(response, ICMP_ECHO_REPLY, source_ip);
     }
 }
 

@@ -34,7 +34,8 @@ pub fn init() {
 }
 
 pub fn recv_packet() -> buf::NetBuffer {
-    let mut packet = buf::alloc();
+    let mut packet = buf::NetBuffer::new();
+    packet.offset = 0;
     unsafe {
         let result = tun_recv(packet.data.as_mut_ptr(), packet.data.len());
         if result <= 0 {
