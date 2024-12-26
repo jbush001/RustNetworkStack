@@ -21,8 +21,8 @@ use crate::util;
 
 extern {
     fn tun_init() -> i32;
-    fn tun_recv(buffer: *mut u8, length: u32) -> i32;
-    fn tun_send(buffer: *const u8, length: u32) -> i32;
+    fn tun_recv(buffer: *mut u8, length: usize) -> i32;
+    fn tun_send(buffer: *const u8, length: usize) -> i32;
 }
 
 const LOCAL_IP: util::IPv4Addr = 0x0a000002; // 10.0.0.2
@@ -36,13 +36,13 @@ pub fn init() {
 pub fn recv_packet() -> buf::NetBuffer {
     let mut packet = buf::alloc();
     unsafe {
-        let result = tun_recv(packet.data.as_mut_ptr(), packet.data.len() as u32);
+        let result = tun_recv(packet.data.as_mut_ptr(), packet.data.len());
         if result <= 0 {
             println!("Error {} reading from TUN interface", result);
             std::process::exit(1);
         }
 
-        packet.length = result as u32;
+        packet.length = result as usize;
     }
 
     packet
@@ -50,8 +50,8 @@ pub fn recv_packet() -> buf::NetBuffer {
 
 pub fn send_packet(packet: buf::NetBuffer) {
     unsafe {
-        let result = tun_send(packet.data.as_ptr().add(packet.offset as usize),
-            packet.payload_len() as u32);
+        let result = tun_send(packet.data.as_ptr().add(packet.offset),
+            packet.payload_len());
         if result <= 0 {
             println!("Error {} writing to TUN interface", result);
             std::process::exit(1);

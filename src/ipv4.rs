@@ -25,8 +25,8 @@ pub const PROTO_ICMP: u8 = 1;
 pub const PROTO_TCP: u8 = 6;
 pub const PROTO_UDP: u8 = 17;
 
-const IP_HEADER_LEN: u32 = 20;
-static mut next_packet_id: u16 = 0;
+const IP_HEADER_LEN: usize = 20;
+static mut NEXT_PACKET_ID: u16 = 0;
 const DEFAULT_TTL : u8 = 64;
 
 
@@ -52,8 +52,8 @@ pub fn ip_recv(mut packet: buf::NetBuffer) {
         return;
     }
 
-    let header_len = (((payload[0] as u8) & 0xf) as u32) * 4;
-    let checksum = util::compute_checksum(&payload[..header_len as usize]);
+    let header_len = (((payload[0] as u8) & 0xf) as usize) * 4;
+    let checksum = util::compute_checksum(&payload[..header_len]);
     if checksum != 0 {
         println!("IP checksum error {:04x}", checksum);
         return;
@@ -67,7 +67,7 @@ pub fn ip_recv(mut packet: buf::NetBuffer) {
     println!("Protocol {}", protocol);
     println!("Source addr {}", util::ip_to_str(source_addr));
     println!("Dest addr {}", util::ip_to_str(dest_addr));
-    packet.offset += header_len;
+    packet.remove_header(header_len);
 
     match protocol {
         PROTO_ICMP => icmpv4::icmp_recv(packet, source_addr),
@@ -78,17 +78,17 @@ pub fn ip_recv(mut packet: buf::NetBuffer) {
 }
 
 pub fn ip_send(mut packet: buf::NetBuffer, protocol: u8, dest_addr: util::IPv4Addr) {
-    assert!(packet.offset > IP_HEADER_LEN);
-    packet.offset -= IP_HEADER_LEN;
+    packet.add_header(IP_HEADER_LEN);
     let packet_length = packet.payload_len() as u16;
     let payload = packet.mut_payload();
 
     payload[0] = 0x45; // Version/IHL
     util::set_be16(&mut payload[2..4], packet_length); // Total Length
 
+    // This is unsafe because we are accessing the global variable NEXT_PACKET_ID
     unsafe {
-        util::set_be16(&mut payload[4..6], next_packet_id); // ID
-        next_packet_id += 1;
+        util::set_be16(&mut payload[4..6], NEXT_PACKET_ID); // ID
+        NEXT_PACKET_ID += 1;
     }
 
     payload[8] = DEFAULT_TTL; // TTL
@@ -96,7 +96,7 @@ pub fn ip_send(mut packet: buf::NetBuffer, protocol: u8, dest_addr: util::IPv4Ad
     util::set_be32(&mut payload[12..16], netif::get_ipaddr()); // Source Address
     util::set_be32(&mut payload[16..24], dest_addr); // Destination Address
 
-    let checksum = util::compute_checksum(payload);
+    let checksum = util::compute_checksum(&payload[..IP_HEADER_LEN]);
     util::set_be16(&mut payload[10..12], checksum);
 
     netif::send_packet(packet);

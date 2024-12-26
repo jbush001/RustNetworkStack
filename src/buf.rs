@@ -16,8 +16,8 @@
 
 pub struct NetBuffer {
     pub data: [u8; 2048],
-    pub length: u32,
-    pub offset: u32,
+    pub length: usize,
+    pub offset: usize,
 }
 
 pub fn alloc() -> NetBuffer {
@@ -30,14 +30,40 @@ pub fn alloc() -> NetBuffer {
 
 impl NetBuffer {
     pub fn payload(&self) -> &[u8] {
-        &self.data[self.offset as usize..self.length as usize]
+        &self.data[self.offset..self.length]
     }
 
     pub fn mut_payload(&mut self) -> &mut [u8] {
-        &mut self.data[self.offset as usize..self.length as usize]
+        &mut self.data[self.offset..self.length]
     }
 
     pub fn payload_len(&self) -> usize {
-        (self.length - self.offset) as usize
+        self.length - self.offset
+    }
+
+    pub fn add_header(&mut self, size: usize) {
+        if self.offset < size {
+            // Grow the buffer to give space to prepend a new header
+            // (plus a little more space)
+            let grow_size = size + 32;
+            unsafe {
+                std::ptr::copy(self.data.as_ptr(), self.data.as_mut_ptr().add(grow_size),
+                    self.length - self.offset);
+            }
+            self.offset += grow_size;
+            println!("Grow buffer");
+        }
+
+        self.offset -= size;
+
+        // Clear out the header
+        for i in self.offset..self.offset + size {
+            self.data[i] = 0u8;
+        }
+    }
+
+    pub fn remove_header(&mut self, size: usize) {
+        assert!(self.offset + size < self.length);
+        self.offset += size;
     }
 }
