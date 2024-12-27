@@ -20,13 +20,14 @@ use crate::netif;
 use crate::tcpv4;
 use crate::udpv4;
 use crate::util;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 pub const PROTO_ICMP: u8 = 1;
 pub const PROTO_TCP: u8 = 6;
 pub const PROTO_UDP: u8 = 17;
 
 const IP_HEADER_LEN: usize = 20;
-static mut NEXT_PACKET_ID: u16 = 0;
+static mut NEXT_PACKET_ID: AtomicU16 = AtomicU16::new(0);
 const DEFAULT_TTL: u8 = 64;
 
 //    0               1               2               3
@@ -84,11 +85,10 @@ pub fn ip_output(mut packet: buf::NetBuffer, protocol: u8, dest_addr: util::IPv4
     payload[0] = 0x45; // Version/IHL
     util::set_be16(&mut payload[2..4], packet_length); // Total Length
 
-    // This is unsafe because we are accessing the global variable NEXT_PACKET_ID
-    unsafe {
-        util::set_be16(&mut payload[4..6], NEXT_PACKET_ID); // ID
-        NEXT_PACKET_ID += 1;
-    }
+    util::set_be16(
+        &mut payload[4..6],  // ID
+        unsafe { NEXT_PACKET_ID.fetch_add(1, Ordering::AcqRel) },
+    );
 
     payload[8] = DEFAULT_TTL; // TTL
     payload[9] = protocol; // Protocol
