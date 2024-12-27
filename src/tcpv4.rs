@@ -40,14 +40,19 @@ enum TCPState {
     TimeWait,
 }
 
+const FLAG_FIN: u8 = 1;
+const FLAG_SYN: u8 = 2;
+const FLAG_RST: u8 = 4;
+const FLAG_PSH: u8 = 8;
+const FLAG_ACK: u8 = 16;
+
 pub struct TCPSocket {
-    receive_queue: Vec<(util::IPv4Addr, u16, buf::NetBuffer)>,
     remote_ip: util::IPv4Addr,
     remote_port: u16,
     local_port: u16,
     next_seq_num: u32,
     next_expected_seq: u32,
-    state: TCPState
+    state: TCPState,
 }
 
 lazy_static! {
@@ -63,13 +68,8 @@ lazy_static! {
 static mut NEXT_EPHEMERAL_PORT: u16 = EPHEMERAL_PORT_BASE;
 
 impl TCPSocket {
-    fn new(
-        remote_ip: util::IPv4Addr,
-        remote_port: u16,
-        local_port: u16
-    ) -> TCPSocket {
+    fn new(remote_ip: util::IPv4Addr, remote_port: u16, local_port: u16) -> TCPSocket {
         TCPSocket {
-            receive_queue: Vec::new(),
             remote_ip: remote_ip,
             remote_port: remote_port,
             local_port: local_port,
@@ -80,11 +80,8 @@ impl TCPSocket {
     }
 
     fn handle_packet(&mut self, packet: buf::NetBuffer, seq_num: u32, ack_num: u32, flags: u8) {
-        println!("Got TCP packet for port {}", self.local_port);
         match self.state {
             TCPState::SynSent => {
-                println!("Got SYN/ACK");
-
                 if (flags & FLAG_RST) != 0 {
                     println!("Connection refused");
                     self.state = TCPState::Closed;
@@ -97,7 +94,7 @@ impl TCPSocket {
                     self.state = TCPState::Established;
                     self.next_expected_seq = seq_num + 1;
 
-                    println!("Connection established, sending ack from {} to {}", self.local_port, self.remote_port);
+                    println!("Connection established");
                     tcp_output(
                         buf::NetBuffer::new(),
                         self.local_port,
@@ -123,8 +120,15 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16) -> Arc<Mutex<TCPSoc
         NEXT_EPHEMERAL_PORT += 1;
     }
 
-    let handle = Arc::new(Mutex::new(TCPSocket::new(remote_ip, remote_port, local_port)));
-    PORT_MAP.lock().unwrap().insert((remote_ip, remote_port, local_port), handle.clone());
+    let handle = Arc::new(Mutex::new(TCPSocket::new(
+        remote_ip,
+        remote_port,
+        local_port,
+    )));
+    PORT_MAP
+        .lock()
+        .unwrap()
+        .insert((remote_ip, remote_port, local_port), handle.clone());
 
     {
         let mut sock = handle.lock().unwrap();
@@ -165,15 +169,7 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16) -> Arc<Mutex<TCPSoc
 //    +---------------------------------------------------------------+
 //
 
-const FLAG_FIN: u8 = 1;
-const FLAG_SYN: u8 = 2;
-const FLAG_RST: u8 = 4;
-const FLAG_PSH: u8 = 8;
-const FLAG_ACK: u8 = 16;
-
 pub fn tcp_input(packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
-    println!("Got TCP packet");
-
     let payload = packet.payload();
     let source_port = util::get_be16(&payload[0..2]);
     let dest_port = util::get_be16(&payload[2..4]);
@@ -204,7 +200,7 @@ pub fn tcp_input(packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
             dest_port,
             source_ip,
             source_port,
-            1, // Sequence number
+            1,           // Sequence number
             seq_num + 1, // Acknowledge sequence from host.
             FLAG_RST | FLAG_ACK,
             0,
@@ -213,7 +209,11 @@ pub fn tcp_input(packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         return;
     }
 
-    socket.unwrap().lock().unwrap().handle_packet(packet, seq_num, ack_num, flags);
+    socket
+        .unwrap()
+        .lock()
+        .unwrap()
+        .handle_packet(packet, seq_num, ack_num, flags);
 }
 
 const TCP_HEADER_LEN: usize = 20;
@@ -228,7 +228,6 @@ pub fn tcp_output(
     flags: u8,
     window: u16,
 ) {
-    println!("Sending TCP packet, ack {}", ack_num);
     packet.add_header(TCP_HEADER_LEN);
     let length = packet.payload_len() as u16;
     let payload = packet.mut_payload();

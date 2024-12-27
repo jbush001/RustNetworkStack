@@ -86,7 +86,7 @@ pub fn ip_output(mut packet: buf::NetBuffer, protocol: u8, dest_addr: util::IPv4
     util::set_be16(&mut payload[2..4], packet_length); // Total Length
 
     util::set_be16(
-        &mut payload[4..6],  // ID
+        &mut payload[4..6], // ID
         unsafe { NEXT_PACKET_ID.fetch_add(1, Ordering::AcqRel) },
     );
 

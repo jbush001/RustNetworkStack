@@ -57,7 +57,6 @@ impl NetBuffer {
             }
             self.offset += grow_size;
             self.length += grow_size;
-            println!("Grow buffer");
         }
 
         self.offset -= size;
@@ -81,6 +80,9 @@ impl NetBuffer {
 }
 
 mod tests {
+
+    use crate::buf::NetBuffer;
+
     #[test]
     fn test_add_header() {
         let mut buf = NetBuffer::new();

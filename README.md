@@ -1,18 +1,19 @@
-This is a user space TCP/IP network stack.
+This is a user space TCP/IP network stack (work in progress).
 
 It's my first real Rust program (other than simple tutorials). I've
-been wanting to dig into Rust more deeply with a large project for a while,
-and this one seemed like an interesting challenge. I have written a network
-stack before: I coded the one on the T-Mobile Sidekick at Danger from scratch
-many years ago, but that was in C.
+been wanting to dig into Rust more deeply with a more substantial project
+for a while, and this one seemed like an interesting challenge. *I have
+written a network stack before: I coded the one on the T-Mobile Sidekick
+at Danger from scratch many years ago, but that was in C.*
 
 This uses the TUN/TAP driver on Linux to provide a network interface. These
 drivers present a virtual network interface (akin to plugging in an Ethernet
 card) to the host operating system. We then simulate this stack as a remote
 host on that virtual network. This allows this stack to communicate with
-programs running on the host. With bridging, it should also allow this stack
-to communicate with other machines on the Internet (although I'm not that
-far along yet and haven't configured that).
+programs running on the host.
+Using bridging (<https://developers.redhat.com/articles/2022/04/06/introduction-linux-bridging-commands-and-features>),
+this should also allow this stack to communicate with other machines on the
+Internet (although I'm not that far along yet).
 
     +----------------------+              +--------------------+
     |       netstack       |              |  Host test program |
@@ -69,11 +70,6 @@ invoked after netstack is running, otherwise the interface will not exist).
 
     sudo tcpdump -i tun0 -v
 
-TCP is only a stub, but the beginnings of the 3-way handshake can be
-demonstrated by:
-
-    wget http://10.0.0.2
-
 The UDP stack can be tested with the included udp_test.py, which uses the
 host's network stack. After starting netstack, run this program to
 send UDP packets to it:
@@ -83,3 +79,6 @@ send UDP packets to it:
 Testing TCP connect, uncomment test_tcp_connect in main.rs. Before launching app:
 
     python3 -m http.server 8765
+
+It will complete the connection, but doesn't have support for transferring
+data yet.

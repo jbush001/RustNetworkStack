@@ -48,7 +48,7 @@ fn test_udp_echo() {
 
 fn test_tcp_connect() {
     // XXX Give a little time to start tcpdump
-//    std::thread::sleep(std::time::Duration::from_secs(5));
+    // std::thread::sleep(std::time::Duration::from_secs(5));
 
     let mut socket = tcpv4::tcp_open(0x0a000001, 8765);
 }
