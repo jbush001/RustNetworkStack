@@ -79,8 +79,8 @@ pub fn ip_input(mut packet: buf::NetBuffer) {
 
 pub fn ip_output(mut packet: buf::NetBuffer, protocol: u8, dest_addr: util::IPv4Addr) {
     packet.add_header(IP_HEADER_LEN);
-    let packet_length = packet.payload_len() as u16;
     let payload = packet.mut_payload();
+    let packet_length = payload.len() as u16;
 
     payload[0] = 0x45; // Version/IHL
     util::set_be16(&mut payload[2..4], packet_length); // Total Length

@@ -120,8 +120,8 @@ fn udp_output(
     dest_port: u16,
 ) {
     packet.add_header(UDP_HEADER_LEN);
-    let length = packet.payload_len() as u16;
     let payload = packet.mut_payload();
+    let length = payload.len() as u16;
     util::set_be16(&mut payload[0..2], source_port);
     util::set_be16(&mut payload[2..4], dest_port);
     util::set_be16(&mut payload[4..6], length);
