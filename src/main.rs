@@ -27,7 +27,7 @@ fn packet_receive_thread() {
         let packet = netif::recv_packet();
         println!("Received buf ({} bytes):", packet.length);
         util::print_binary(packet.payload());
-        ipv4::ip_recv(packet);
+        ipv4::ip_input(packet);
     }
 }
 
@@ -37,11 +37,16 @@ fn main() {
         packet_receive_thread();
     });
 
-    let mut socket = udpv4::UDPSocket::new(8000);
+    let mut socket = udpv4::udp_open(8000);
     loop {
-        let (source_addr, source_port, data) = udpv4::udp_read(&mut socket);
-        println!("Received UDP packet from {}:{} ({} bytes)", source_addr, source_port, data.len());
+        let (source_addr, source_port, data) = udpv4::udp_recv(&mut socket);
+        println!(
+            "Received UDP packet from {}:{} ({} bytes)",
+            source_addr,
+            source_port,
+            data.len()
+        );
         util::print_binary(&data);
-        socket.lock().unwrap().send(source_addr, source_port, &data);
+        udpv4::udp_send(&mut socket, source_addr, source_port, &data);
     }
 }

@@ -30,7 +30,7 @@ const ICMP_ECHO_REPLY: u8 = 0;
 
 const ICMP_HEADER_LEN: usize = 4;
 
-pub fn icmp_recv(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
+pub fn icmp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     let payload = packet.payload();
     let checksum = util::compute_checksum(&payload);
     if checksum != 0 {
@@ -44,15 +44,15 @@ pub fn icmp_recv(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         // Send a response
         let mut response = buf::NetBuffer::new();
         response.append_from_slice(packet.payload());
-        icmp_send(response, ICMP_ECHO_REPLY, source_ip);
+        icmp_output(response, ICMP_ECHO_REPLY, source_ip);
     }
 }
 
-pub fn icmp_send(mut packet: buf::NetBuffer, packet_type: u8, dest_addr: util::IPv4Addr) {
+pub fn icmp_output(mut packet: buf::NetBuffer, packet_type: u8, dest_addr: util::IPv4Addr) {
     packet.add_header(ICMP_HEADER_LEN);
     let payload = packet.mut_payload();
     payload[0] = packet_type;
     let checksum = util::compute_checksum(payload);
     util::set_be16(&mut payload[2..4], checksum);
-    ipv4::ip_send(packet, ipv4::PROTO_ICMP, dest_addr);
+    ipv4::ip_output(packet, ipv4::PROTO_ICMP, dest_addr);
 }

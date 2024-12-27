@@ -34,7 +34,7 @@ use crate::util;
 //    +---------------------------------------------------------------+
 //
 
-pub fn tcp_recv(packet: buf::NetBuffer, _source_ip: util::IPv4Addr) {
+pub fn tcp_input(packet: buf::NetBuffer, _source_ip: util::IPv4Addr) {
     println!("Got TCP packet");
 
     let payload = packet.payload();

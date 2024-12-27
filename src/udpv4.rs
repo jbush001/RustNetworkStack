@@ -17,10 +17,10 @@
 use crate::buf;
 use crate::ipv4;
 use crate::util;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::sync::Condvar;
 use lazy_static::lazy_static;
+use std::collections::HashMap;
+use std::sync::Condvar;
+use std::sync::{Arc, Mutex};
 
 pub struct UDPSocket {
     receive_queue: Vec<(util::IPv4Addr, u16, buf::NetBuffer)>,
@@ -37,7 +37,7 @@ lazy_static! {
 }
 
 impl UDPSocket {
-    pub fn new(port: u16) -> Arc<Mutex<UDPSocket>> {
+    fn new(port: u16) -> Arc<Mutex<UDPSocket>> {
         let socket = UDPSocket {
             receive_queue: Vec::new(),
             port: port,
@@ -47,15 +47,13 @@ impl UDPSocket {
         PORT_MAP.lock().unwrap().insert(port, handle.clone());
         handle
     }
-
-    pub fn send(&mut self, dest_addr: util::IPv4Addr, dest_port: u16, data: &[u8]) {
-        let mut packet = buf::NetBuffer::new();
-        packet.append_from_slice(data);
-        udp_send(packet, dest_addr, self.port, dest_port);
-    }
 }
 
-pub fn udp_read(socket: &mut Arc<Mutex<UDPSocket>>) -> (util::IPv4Addr, u16, Vec<u8>) {
+pub fn udp_open(port: u16) -> Arc<Mutex<UDPSocket>> {
+    return UDPSocket::new(port);
+}
+
+pub fn udp_recv(socket: &mut Arc<Mutex<UDPSocket>>) -> (util::IPv4Addr, u16, Vec<u8>) {
     let mut guard = socket.lock().unwrap();
     loop {
         let entry = guard.receive_queue.pop();
@@ -69,6 +67,17 @@ pub fn udp_read(socket: &mut Arc<Mutex<UDPSocket>>) -> (util::IPv4Addr, u16, Vec
     }
 }
 
+pub fn udp_send(
+    socket: &mut Arc<Mutex<UDPSocket>>,
+    dest_addr: util::IPv4Addr,
+    dest_port: u16,
+    data: &[u8],
+) {
+    let guard = socket.lock().unwrap();
+    let mut packet = buf::NetBuffer::new();
+    packet.append_from_slice(data);
+    udp_output(packet, dest_addr, guard.port, dest_port);
+}
 
 //    0               1               2               3
 //    +-------------------------------+-------------------------------+
@@ -79,7 +88,7 @@ pub fn udp_read(socket: &mut Arc<Mutex<UDPSocket>>) -> (util::IPv4Addr, u16, Vec
 
 const UDP_HEADER_LEN: usize = 8;
 
-pub fn udp_recv(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
+pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
     println!("Got UDP packet");
 
     let payload = packet.payload();
@@ -98,11 +107,16 @@ pub fn udp_recv(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
         return;
     }
 
-    socket.unwrap().lock().unwrap().receive_queue.push((source_addr, source_port, packet));
+    socket
+        .unwrap()
+        .lock()
+        .unwrap()
+        .receive_queue
+        .push((source_addr, source_port, packet));
     RECV_WAIT.notify_all();
 }
 
-fn udp_send(
+fn udp_output(
     mut packet: buf::NetBuffer,
     dest_addr: util::IPv4Addr,
     source_port: u16,
@@ -116,5 +130,5 @@ fn udp_send(
     util::set_be16(&mut payload[4..6], length);
     util::set_be16(&mut payload[6..8], 0); // Skip computing checksum
 
-    ipv4::ip_send(packet, ipv4::PROTO_UDP, dest_addr);
+    ipv4::ip_output(packet, ipv4::PROTO_UDP, dest_addr);
 }
