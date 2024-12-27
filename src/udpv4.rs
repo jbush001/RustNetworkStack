@@ -37,20 +37,19 @@ lazy_static! {
 }
 
 impl UDPSocket {
-    fn new(port: u16) -> Arc<Mutex<UDPSocket>> {
-        let socket = UDPSocket {
+    fn new(port: u16) -> UDPSocket {
+        UDPSocket {
             receive_queue: Vec::new(),
             port: port,
-        };
-
-        let handle = Arc::new(Mutex::new(socket));
-        PORT_MAP.lock().unwrap().insert(port, handle.clone());
-        handle
+        }
     }
 }
 
 pub fn udp_open(port: u16) -> Arc<Mutex<UDPSocket>> {
-    return UDPSocket::new(port);
+    let socket = UDPSocket::new(port);
+    let handle = Arc::new(Mutex::new(socket));
+    PORT_MAP.lock().unwrap().insert(port, handle.clone());
+    handle
 }
 
 pub fn udp_recv(socket: &mut Arc<Mutex<UDPSocket>>) -> (util::IPv4Addr, u16, Vec<u8>) {

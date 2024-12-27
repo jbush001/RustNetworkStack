@@ -31,12 +31,7 @@ fn packet_receive_thread() {
     }
 }
 
-fn main() {
-    netif::init();
-    std::thread::spawn(move || {
-        packet_receive_thread();
-    });
-
+fn test_udp_echo() {
     let mut socket = udpv4::udp_open(8000);
     loop {
         let (source_addr, source_port, data) = udpv4::udp_recv(&mut socket);
@@ -49,4 +44,25 @@ fn main() {
         util::print_binary(&data);
         udpv4::udp_send(&mut socket, source_addr, source_port, &data);
     }
+}
+
+fn test_tcp_connect() {
+    // XXX Give a little time to start tcpdump
+//    std::thread::sleep(std::time::Duration::from_secs(5));
+
+    let mut socket = tcpv4::tcp_open(0x0a000001, 8765);
+}
+
+fn main() {
+    netif::init();
+    std::thread::spawn(move || {
+        packet_receive_thread();
+    });
+
+    std::thread::spawn(move || {
+        test_udp_echo();
+    });
+
+    test_tcp_connect();
+    std::thread::park();
 }

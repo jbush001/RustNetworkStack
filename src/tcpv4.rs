@@ -18,6 +18,135 @@ use crate::buf;
 use crate::ipv4;
 use crate::netif;
 use crate::util;
+use lazy_static::lazy_static;
+use std::collections::HashMap;
+use std::sync::Condvar;
+use std::sync::{Arc, Mutex};
+
+type SocketKey = (util::IPv4Addr, u16, u16);
+const EPHEMERAL_PORT_BASE: u16 = 49152;
+
+enum TCPState {
+    Closed,
+    Listen,
+    SynSent,
+    SynReceived,
+    Established,
+    FinWait1,
+    FinWait2,
+    CloseWait,
+    Closing,
+    LastAck,
+    TimeWait,
+}
+
+pub struct TCPSocket {
+    receive_queue: Vec<(util::IPv4Addr, u16, buf::NetBuffer)>,
+    remote_ip: util::IPv4Addr,
+    remote_port: u16,
+    local_port: u16,
+    next_seq_num: u32,
+    next_expected_seq: u32,
+    state: TCPState
+}
+
+lazy_static! {
+    static ref PORT_MAP: Mutex<HashMap<SocketKey, Arc<Mutex<TCPSocket>>>> = Mutex::new(HashMap::new());
+
+    // This is not ideal, as it wakes up all threads waiting for data any time there
+    // is actitiy on any socket. But we get into all kinds of reference/ownership
+    // complexity if we try to associate a condition with each socket.
+    static ref RECV_WAIT: Condvar = Condvar::new();
+}
+
+// XXX this is not protected with a lock.
+static mut NEXT_EPHEMERAL_PORT: u16 = EPHEMERAL_PORT_BASE;
+
+impl TCPSocket {
+    fn new(
+        remote_ip: util::IPv4Addr,
+        remote_port: u16,
+        local_port: u16
+    ) -> TCPSocket {
+        TCPSocket {
+            receive_queue: Vec::new(),
+            remote_ip: remote_ip,
+            remote_port: remote_port,
+            local_port: local_port,
+            next_seq_num: 1, // XXX this should be randomized
+            next_expected_seq: 0,
+            state: TCPState::Closed,
+        }
+    }
+
+    fn handle_packet(&mut self, packet: buf::NetBuffer, seq_num: u32, ack_num: u32, flags: u8) {
+        println!("Got TCP packet for port {}", self.local_port);
+        match self.state {
+            TCPState::SynSent => {
+                println!("Got SYN/ACK");
+
+                if (flags & FLAG_RST) != 0 {
+                    println!("Connection refused");
+                    self.state = TCPState::Closed;
+                    return;
+                }
+
+                if (flags & FLAG_ACK) != 0 {
+                    // XXX check that the ack number is correct
+
+                    self.state = TCPState::Established;
+                    self.next_expected_seq = seq_num + 1;
+
+                    println!("Connection established, sending ack from {} to {}", self.local_port, self.remote_port);
+                    tcp_output(
+                        buf::NetBuffer::new(),
+                        self.local_port,
+                        self.remote_ip,
+                        self.remote_port,
+                        self.next_seq_num,
+                        self.next_expected_seq,
+                        FLAG_ACK,
+                        32768,
+                    );
+                }
+            }
+            _ => {
+                println!("Unhandled state");
+            }
+        }
+    }
+}
+
+pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16) -> Arc<Mutex<TCPSocket>> {
+    let local_port = unsafe { NEXT_EPHEMERAL_PORT };
+    unsafe {
+        NEXT_EPHEMERAL_PORT += 1;
+    }
+
+    let handle = Arc::new(Mutex::new(TCPSocket::new(remote_ip, remote_port, local_port)));
+    PORT_MAP.lock().unwrap().insert((remote_ip, remote_port, local_port), handle.clone());
+
+    {
+        let mut sock = handle.lock().unwrap();
+        sock.state = TCPState::SynSent;
+
+        // XXX will not retry
+        tcp_output(
+            buf::NetBuffer::new(),
+            local_port,
+            remote_ip,
+            remote_port,
+            sock.next_seq_num,
+            0,
+            FLAG_SYN,
+            32768,
+        );
+
+        sock.next_seq_num += 1;
+    }
+
+    handle
+}
 
 //
 //    0               1               2               3
@@ -65,27 +194,34 @@ pub fn tcp_input(packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         if (flags & FLAG_FIN) != 0 { "F" } else { "-" }
     );
 
-    // We always send a reset packet, since we don't have any socket support
-    // yet.
-    let response = buf::NetBuffer::new();
-    tcp_output(
-        response,
-        source_ip,
-        dest_port,
-        source_port,
-        1, // Sequence number
-        seq_num + 1, // Acknowledge sequence from host.
-        FLAG_RST | FLAG_ACK,
-        0,
-    );
+    // Lookup socket
+    let mut port_map_guard = PORT_MAP.lock().unwrap();
+    let socket = port_map_guard.get_mut(&(source_ip, source_port, dest_port));
+    if socket.is_none() {
+        let response = buf::NetBuffer::new();
+        tcp_output(
+            response,
+            dest_port,
+            source_ip,
+            source_port,
+            1, // Sequence number
+            seq_num + 1, // Acknowledge sequence from host.
+            FLAG_RST | FLAG_ACK,
+            0,
+        );
+
+        return;
+    }
+
+    socket.unwrap().lock().unwrap().handle_packet(packet, seq_num, ack_num, flags);
 }
 
 const TCP_HEADER_LEN: usize = 20;
 
 pub fn tcp_output(
     mut packet: buf::NetBuffer,
-    dest_ip: util::IPv4Addr,
     source_port: u16,
+    dest_ip: util::IPv4Addr,
     dest_port: u16,
     seq_num: u32,
     ack_num: u32,
@@ -117,8 +253,6 @@ pub fn tcp_output(
     let ph_sum = util::compute_ones_complement(0, &pseudo_header);
     let checksum = util::compute_ones_complement(ph_sum, &payload[..length as usize]) ^ 0xffff;
     util::set_be16(&mut payload[16..18], checksum);
-
-    util::print_binary(&packet.payload());
 
     ipv4::ip_output(packet, ipv4::PROTO_TCP, dest_ip);
 }

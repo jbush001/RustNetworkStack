@@ -79,3 +79,7 @@ host's network stack. After starting netstack, run this program to
 send UDP packets to it:
 
     python3 udp_test.py 10.0.0.2
+
+Testing TCP connect, uncomment test_tcp_connect in main.rs. Before launching app:
+
+    python3 -m http.server 8765
