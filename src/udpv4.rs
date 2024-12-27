@@ -89,8 +89,6 @@ pub fn udp_send(
 const UDP_HEADER_LEN: usize = 8;
 
 pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
-    println!("Got UDP packet");
-
     let payload = packet.payload();
     let source_port = util::get_be16(&payload[0..2]);
     let dest_port = util::get_be16(&payload[2..4]);

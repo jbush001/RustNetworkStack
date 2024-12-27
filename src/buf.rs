@@ -20,7 +20,7 @@ pub struct NetBuffer {
     pub offset: usize,
 }
 
-const DEFAULT_HEADER_LEN: usize = 32;
+const DEFAULT_HEADER_LEN: usize = 48;
 
 impl NetBuffer {
     pub fn new() -> NetBuffer {
