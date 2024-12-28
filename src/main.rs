@@ -60,10 +60,10 @@ fn test_tcp_connect() {
 
     const REQUEST_STRING: &str = "GET / HTTP/1.0\r\n\r\n";
     const REQUEST_BYTES: &[u8] = REQUEST_STRING.as_bytes();
-    tcpv4::tcp_send(&mut socket, REQUEST_BYTES);
+    tcpv4::tcp_write(&mut socket, REQUEST_BYTES);
     loop {
         let mut data = [0; 1500];
-        let received = tcpv4::tcp_recv(&mut socket, &mut data);
+        let received = tcpv4::tcp_read(&mut socket, &mut data);
         if received > 0 {
             print!("{}", std::str::from_utf8(&data[..received as usize]).unwrap());
         }

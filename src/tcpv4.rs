@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex};
 
 type SocketKey = (util::IPv4Addr, u16, u16);
 const EPHEMERAL_PORT_BASE: u16 = 49152;
+const TCP_MTU: usize = 1500;
 
 // XXX hardcoded for now, as this should scale with capacity.
 const WINDOW_SIZE: u16 = 32768;
@@ -45,10 +46,15 @@ pub struct TCPSocket {
     remote_ip: util::IPv4Addr,
     remote_port: u16,
     local_port: u16,
-    next_seq_num: u32,
     state: TCPState,
+
+    // Receive
     receive_queue: buf::NetBuffer,
     reassembler: TCPReassembler,
+
+    // Transmit
+    next_transmit_seq: u32,
+    retransmit_queue: buf::NetBuffer,
 }
 
 pub struct TCPReassembler {
@@ -74,10 +80,11 @@ impl TCPSocket {
             remote_ip: remote_ip,
             remote_port: remote_port,
             local_port: local_port,
-            next_seq_num: 1, // XXX this should be randomized
+            next_transmit_seq: 1, // XXX this should be randomized
             state: TCPState::Closed,
             receive_queue: buf::NetBuffer::new(),
             reassembler: TCPReassembler::new(),
+            retransmit_queue: buf::NetBuffer::new(),
         }
     }
 
@@ -85,7 +92,7 @@ impl TCPSocket {
         &mut self,
         packet: buf::NetBuffer,
         seq_num: u32,
-        _ack_num: u32,
+        ack_num: u32,
         flags: u8
     ) {
         match self.state {
@@ -98,16 +105,22 @@ impl TCPSocket {
 
                 if (flags & FLAG_ACK) != 0 {
                     // XXX check that the ack number is correct
+                    if ack_num != self.next_transmit_seq.wrapping_add(1) {
+                        println!("Unexpected ack {} wanted {}+1", ack_num, self.next_transmit_seq);
+                    }
 
                     self.state = TCPState::Established;
                     self.reassembler.set_next_expect(seq_num + 1);
+
+                    // The SYN consumes a sequence number.
+                    self.next_transmit_seq = self.next_transmit_seq.wrapping_add(1);
 
                     tcp_output(
                         buf::NetBuffer::new(),
                         self.local_port,
                         self.remote_ip,
                         self.remote_port,
-                        self.next_seq_num,
+                        self.next_transmit_seq,
                         self.reassembler.get_next_expect(),
                         FLAG_ACK,
                         WINDOW_SIZE,
@@ -131,6 +144,24 @@ impl TCPSocket {
                     return;
                 }
 
+                if (flags & FLAG_ACK) != 0 {
+                    if util::seq_gt(ack_num, self.next_transmit_seq) {
+                        println!("ERROR: Unexpected ack {} next_transmit_seq {}",
+                            ack_num, self.next_transmit_seq);
+                    } else {
+                        let oldest_unacked = self.next_transmit_seq.wrapping_sub(
+                            self.retransmit_queue.len() as u32);
+                        if util::seq_gt(ack_num, oldest_unacked) {
+                            let trim = ack_num.wrapping_sub(oldest_unacked) as usize;
+                            self.retransmit_queue.trim_head(trim);
+                            println!(
+                                "Trimming {} acked bytes from retransmit queue, size is now {}",
+                                trim, self.retransmit_queue.len()
+                            );
+                        }
+                    }
+                }
+
                 let got = self.reassembler.add_packet(packet, seq_num);
                 if got.is_some() {
                     self.receive_queue.append_buffer(got.unwrap());
@@ -142,7 +173,7 @@ impl TCPSocket {
                     self.local_port,
                     self.remote_ip,
                     self.remote_port,
-                    self.next_seq_num,
+                    self.next_transmit_seq,
                     self.reassembler.get_next_expect(),
                     FLAG_ACK,
                     WINDOW_SIZE,
@@ -184,13 +215,11 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16) -> Arc<Mutex<TCPSoc
             local_port,
             remote_ip,
             remote_port,
-            guard.next_seq_num,
+            guard.next_transmit_seq,
             0,
             FLAG_SYN,
             32768,
         );
-
-        guard.next_seq_num = guard.next_seq_num.wrapping_add(1);
 
         // Wait until this is connected
         while !matches!(guard.state ,TCPState::Established) {
@@ -249,7 +278,7 @@ impl TCPReassembler {
     }
 }
 
-pub fn tcp_recv(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
+pub fn tcp_read(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
     let mut guard = socket.lock().unwrap();
     loop {
         if matches!(guard.state, TCPState::Closed) {
@@ -266,25 +295,27 @@ pub fn tcp_recv(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
     }
 }
 
-// XXX this is a hack for now, as it doesn't handle retransmit or buffering.
-pub fn tcp_send(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) {
-    let mut guard = socket.lock().unwrap();
-    let mut packet = buf::NetBuffer::new();
-    assert!(data.len() < 1460); // There's an MTU in there somewhere.
-    packet.append_from_slice(data);
+pub fn tcp_write(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) {
+    assert!(data.len() < TCP_MTU); // XXX Fix this at some point
 
+    let mut guard = socket.lock().unwrap();
+
+    let mut packet = buf::NetBuffer::new();
+    packet.append_from_slice(data);
     tcp_output(
         packet,
         guard.local_port,
         guard.remote_ip,
         guard.remote_port,
-        guard.next_seq_num,
+        guard.next_transmit_seq,
         guard.reassembler.get_next_expect(),
         FLAG_ACK | FLAG_PSH,
         WINDOW_SIZE,
     );
 
-    guard.next_seq_num += data.len() as u32;
+    guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(data.len() as u32);
+
+    guard.retransmit_queue.append_from_slice(data);
 }
 
 //

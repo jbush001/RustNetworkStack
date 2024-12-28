@@ -99,7 +99,7 @@ pub fn print_binary(buffer: &[u8]) {
 
 pub fn seq_gt(val1: u32, val2: u32) -> bool {
     let diff = val1.wrapping_sub(val2);
-    diff < 0x80000000
+    diff < 0x80000000 && diff != 0
 }
 
 mod tests {
@@ -194,5 +194,6 @@ mod tests {
         assert_eq!(super::seq_gt(0x00000000, 0x00000001), false);
         assert_eq!(super::seq_gt(0x7fffffff, 0x80000000), false);
         assert_eq!(super::seq_gt(0x80000000, 0x7fffffff), true);
+        assert_eq!(super::seq_gt(21, 21), false);
     }
 }
