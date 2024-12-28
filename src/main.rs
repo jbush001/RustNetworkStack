@@ -55,7 +55,14 @@ fn test_tcp_connect() {
     // XXX Give a little time to start tcpdump
     // std::thread::sleep(std::time::Duration::from_secs(5));
 
-    let mut socket = tcpv4::tcp_open(0x0a000001, 3000);
+    let mut handle = tcpv4::tcp_open(0x0a000001, 3000);
+    if handle.is_none() {
+        println!("Failed to open socket");
+        return;
+    }
+
+    let mut socket = handle.unwrap();
+
     println!("Socket is open");
 
     const REQUEST_STRING: &str = "GET / HTTP/1.0\r\n\r\n";

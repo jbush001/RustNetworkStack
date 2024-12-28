@@ -100,11 +100,11 @@ impl TCPSocket {
                 if (flags & FLAG_RST) != 0 {
                     println!("Connection refused");
                     self.state = TCPState::Closed;
+                    RECV_WAIT.notify_all();
                     return;
                 }
 
                 if (flags & FLAG_ACK) != 0 {
-                    // XXX check that the ack number is correct
                     if ack_num != self.next_transmit_seq.wrapping_add(1) {
                         println!("Unexpected ack {} wanted {}+1", ack_num, self.next_transmit_seq);
                     }
@@ -188,8 +188,9 @@ impl TCPSocket {
     }
 }
 
-/// XXX should probably return Option
-pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16) -> Arc<Mutex<TCPSocket>> {
+pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16)
+    -> Option<Arc<Mutex<TCPSocket>>>
+{
     let local_port = unsafe { NEXT_EPHEMERAL_PORT };
     unsafe {
         NEXT_EPHEMERAL_PORT += 1;
@@ -224,11 +225,13 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16) -> Arc<Mutex<TCPSoc
         // Wait until this is connected
         while !matches!(guard.state ,TCPState::Established) {
             guard = RECV_WAIT.wait(guard).unwrap();
-            // XXX this doesn't handle connection errors.
+            if matches!(guard.state, TCPState::Closed) {
+                return None;
+            }
         }
     }
 
-    handle
+    Some(handle)
 }
 
 impl TCPReassembler {
