@@ -206,7 +206,7 @@ impl NetBuffer {
     }
 
     /// Opposite of append_from_slice, copy data out of the buffer.
-    pub fn copy_to_slice(&self, length: usize, dest: &mut [u8]) -> usize {
+    pub fn copy_to_slice(&self, dest: &mut [u8], length: usize) -> usize {
         let mut copied = 0;
         let mut iter = self.iter(0, length);
         while copied < length {
@@ -290,7 +290,7 @@ mod tests {
 
         // Try to copy fewer bytes. Ensure it doesn't overrun
         let mut dest = [0; 15];
-        let copied = buf.copy_to_slice(12, &mut dest);
+        let copied = buf.copy_to_slice(&mut dest, 12);
         assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0, 0, 0]);
         assert_eq!(buf.len(), 15);
         assert_eq!(copied, 12);
@@ -298,7 +298,7 @@ mod tests {
         // Try to copy more bytes than are in the buffer. Ensure it
         // returns a lesser count.
         let mut dest = [0; 15];
-        let copied = buf.copy_to_slice(20, &mut dest);
+        let copied = buf.copy_to_slice(&mut dest, 20);
         assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
         assert_eq!(copied, 15);
     }
@@ -320,7 +320,7 @@ mod tests {
 
         // Check the contents
         let mut dest = [0; 1000];
-        buf.copy_to_slice(1000, &mut dest);
+        buf.copy_to_slice(&mut dest, 1000);
         assert_eq!(dest[..500], slice1);
         assert_eq!(dest[500..], slice2);
     }
@@ -333,14 +333,14 @@ mod tests {
         // This will allocate a new fragment on the beginning of the chain.
         buf.alloc_header(20);
         let mut dest = [0; 512];
-        buf.copy_to_slice(512, &mut dest);
+        buf.copy_to_slice(&mut dest, 512);
         assert_eq!(dest[..20], [0; 20]);
         assert_eq!(dest[20..], [1; 492]);
 
         // This will add to the existing fragment
         buf.alloc_header(20);
         let mut dest = [0; 512];
-        buf.copy_to_slice(512, &mut dest);
+        buf.copy_to_slice(&mut dest, 512);
         assert_eq!(dest[..40], [0; 40]);
         assert_eq!(dest[40..], [1; 472]);
     }
@@ -359,7 +359,7 @@ mod tests {
 
         // Check the contents
         let mut dest = [0; 512];
-        buf.copy_to_slice(512, &mut dest);
+        buf.copy_to_slice(&mut dest, 512);
         for i in 0..492 {
             assert_eq!(dest[i], (i + 20) as u8);
         }
@@ -417,7 +417,7 @@ mod tests {
         buf1.append_buffer(buf2);
 
         let mut dest = [0; 1536];
-        buf1.copy_to_slice(1536, &mut dest);
+        buf1.copy_to_slice(&mut dest, 1536);
         assert_eq!(dest[0..512], [1; 512]);
         assert_eq!(dest[512..1024], [2; 512]);
         assert_eq!(dest[1024..1536], [3; 512]);
@@ -439,7 +439,7 @@ mod tests {
         buf1.append_from_buffer(&buf2, 1000);
 
         let mut dest = [0; 3000];
-        buf1.copy_to_slice(3000, &mut dest);
+        buf1.copy_to_slice(&mut dest, 3000);
         assert_eq!(dest[0..512], [1; 512]);
         assert_eq!(dest[512..1024], [2; 512]);
         assert_eq!(dest[1024..1536], [3; 512]);
@@ -471,7 +471,7 @@ mod tests {
 
         // copy out slices
         let mut dest = [0; 512];
-        buf.copy_to_slice(512, &mut dest);
+        buf.copy_to_slice(&mut dest, 512);
         assert_eq!(dest[0], 0xcc);
         assert_eq!(dest[19], 0x55);
         assert_eq!(dest[20], 1);

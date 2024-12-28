@@ -54,7 +54,7 @@ pub fn send_packet(packet: buf::NetBuffer) {
     let mut writebuf = [0u8; 2048];
     let packet_length = packet.len();
     assert!(packet_length <= writebuf.len());
-    packet.copy_to_slice(usize::MAX, &mut writebuf);
+    packet.copy_to_slice(&mut writebuf, usize::MAX);
     let result = unsafe { tun_send(writebuf.as_ptr(), packet_length) };
     if result <= 0 {
         println!("Error {} writing to TUN interface", result);

@@ -53,16 +53,26 @@ pub fn udp_open(port: u16) -> Arc<Mutex<UDPSocket>> {
     handle
 }
 
-pub fn udp_recv(socket: &mut Arc<Mutex<UDPSocket>>) -> (util::IPv4Addr, u16, Vec<u8>) {
+pub fn udp_recv(
+    socket: &mut Arc<Mutex<UDPSocket>>,
+    data: &mut [u8],
+    out_addr: &mut util::IPv4Addr,
+    out_port: &mut u16,
+) -> i32 {
     let mut guard = socket.lock().unwrap();
     loop {
         let entry = guard.receive_queue.pop_front();
         if !entry.is_none() {
             let (source_addr, source_port, buf) = entry.unwrap();
-            return (source_addr, source_port, buf.to_vec());
+            *out_addr = source_addr;
+            *out_port = source_port;
+            let len = buf.len();
+            let copy_len = std::cmp::min(len, data.len());
+            buf.copy_to_slice(&mut data[0..copy_len], copy_len);
+            return copy_len as i32;
         }
 
-        // Need to wait for more data
+        // Need to wait for data
         guard = RECV_WAIT.wait(guard).unwrap();
     }
 }

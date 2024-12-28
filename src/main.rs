@@ -33,15 +33,20 @@ fn packet_receive_thread() {
 fn test_udp_echo() {
     let mut socket = udpv4::udp_open(8000);
     loop {
-        let (source_addr, source_port, data) = udpv4::udp_recv(&mut socket);
+        let mut source_addr: util::IPv4Addr = 0;
+        let mut source_port: u16 = 0;
+        let mut data = [0; 1500];
+
+        let received = udpv4::udp_recv(&mut socket, &mut data, &mut source_addr, &mut source_port);
         println!(
             "Received UDP packet from {}:{} ({} bytes)",
             source_addr,
             source_port,
-            data.len()
+            received
         );
-        util::print_binary(&data);
-        udpv4::udp_send(&mut socket, source_addr, source_port, &data);
+
+        util::print_binary(&data[..received as usize]);
+        udpv4::udp_send(&mut socket, source_addr, source_port, &data[..received as usize]);
     }
 }
 
@@ -62,6 +67,6 @@ fn main() {
         test_udp_echo();
     });
 
-    test_tcp_connect();
+    //test_tcp_connect();
     std::thread::park();
 }
