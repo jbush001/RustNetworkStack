@@ -27,8 +27,7 @@ type SocketKey = (util::IPv4Addr, u16, u16);
 const EPHEMERAL_PORT_BASE: u16 = 49152;
 const TCP_MTU: usize = 1500;
 
-// XXX hardcoded for now, as this should scale with capacity.
-const MAX_WINDOW: u16 = 32768;
+const MAX_RECEIVE_WINDOW: u16 = 0xffff;
 
 enum TCPState {
     Closed,
@@ -55,6 +54,7 @@ pub struct TCPSocket {
     // Transmit
     next_transmit_seq: u32,
     retransmit_queue: buf::NetBuffer,
+    transmit_window_max: u32, // Highest sequence we can transmit
 }
 
 pub struct TCPReassembler {
@@ -81,6 +81,7 @@ impl TCPSocket {
             remote_port: remote_port,
             local_port: local_port,
             next_transmit_seq: 1, // XXX this should be randomized
+            transmit_window_max: 0,
             state: TCPState::Closed,
             receive_queue: buf::NetBuffer::new(),
             reassembler: TCPReassembler::new(),
@@ -88,8 +89,8 @@ impl TCPSocket {
         }
     }
 
-    fn get_window_size(&self) -> u16 {
-        MAX_WINDOW - self.receive_queue.len() as u16
+    fn get_receive_win_size(&self) -> u16 {
+        MAX_RECEIVE_WINDOW - self.receive_queue.len() as u16
     }
 
     fn handle_packet(
@@ -97,6 +98,7 @@ impl TCPSocket {
         packet: buf::NetBuffer,
         seq_num: u32,
         ack_num: u32,
+        window_size: u16,
         flags: u8
     ) {
         match self.state {
@@ -127,7 +129,7 @@ impl TCPSocket {
                         self.next_transmit_seq,
                         self.reassembler.get_next_expect(),
                         FLAG_ACK,
-                        self.get_window_size(),
+                        self.get_receive_win_size(),
                     );
 
                     // Wake up thread waiting in connect
@@ -164,6 +166,8 @@ impl TCPSocket {
                             );
                         }
                     }
+
+                    self.transmit_window_max = ack_num.wrapping_add(window_size as u32);
                 }
 
                 let got = self.reassembler.add_packet(packet, seq_num);
@@ -180,7 +184,7 @@ impl TCPSocket {
                     self.next_transmit_seq,
                     self.reassembler.get_next_expect(),
                     FLAG_ACK,
-                    self.get_window_size(),
+                    self.get_receive_win_size(),
                 );
 
                 RECV_WAIT.notify_all();
@@ -223,7 +227,7 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16)
             guard.next_transmit_seq,
             0,
             FLAG_SYN,
-            guard.get_window_size(),
+            guard.get_receive_win_size(),
         );
 
         // Wait until this is connected
@@ -302,10 +306,20 @@ pub fn tcp_read(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
     }
 }
 
-pub fn tcp_write(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) {
+pub fn tcp_write(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) -> i32 {
     assert!(data.len() < TCP_MTU); // XXX Fix this at some point
 
     let mut guard = socket.lock().unwrap();
+
+    if matches!(guard.state, TCPState::Closed) {
+        return -1;
+    }
+
+    if util::seq_gt(guard.next_transmit_seq.wrapping_add(data.len() as u32),
+        guard.transmit_window_max) {
+        // XXX Window is full, can't write. Need to block.
+        return 0;
+    }
 
     let mut packet = buf::NetBuffer::new();
     packet.append_from_slice(data);
@@ -317,12 +331,12 @@ pub fn tcp_write(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) {
         guard.next_transmit_seq,
         guard.reassembler.get_next_expect(),
         FLAG_ACK | FLAG_PSH,
-        guard.get_window_size(),
+        guard.get_receive_win_size(),
     );
 
     guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(data.len() as u32);
-
     guard.retransmit_queue.append_from_slice(data);
+    data.len() as i32
 }
 
 //
@@ -349,6 +363,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     let seq_num = util::get_be32(&header[4..8]);
     let ack_num = util::get_be32(&header[8..12]);
     let header_size = ((header[12] >> 4) * 4) as usize;
+    let win_size = util::get_be16(&header[14..16]);
     let flags = header[13];
 
     packet.trim_head(header_size);
@@ -376,7 +391,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         .unwrap()
         .lock()
         .unwrap()
-        .handle_packet(packet, seq_num, ack_num, flags);
+        .handle_packet(packet, seq_num, ack_num, win_size, flags);
 }
 
 const TCP_HEADER_LEN: usize = 20;
