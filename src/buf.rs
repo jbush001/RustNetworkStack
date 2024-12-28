@@ -206,7 +206,7 @@ impl NetBuffer {
     }
 
     /// Opposite of append_from_slice, copy data out of the buffer.
-    pub fn copy_to_slice(&self, length: usize, dest: &mut [u8]) {
+    pub fn copy_to_slice(&self, length: usize, dest: &mut [u8]) -> usize {
         let mut copied = 0;
         let mut iter = self.iter(0, length);
         while copied < length {
@@ -220,6 +220,8 @@ impl NetBuffer {
             dest[copied..copied + copy_len].copy_from_slice(&slice[..copy_len]);
             copied += copy_len;
         }
+
+        return copied;
     }
 
     /// Copy data out of another buffer into this one.
@@ -285,10 +287,20 @@ mod tests {
         buf.append_from_slice(&[1, 2, 3, 4, 5]);
         buf.append_from_slice(&[6, 7, 8, 9, 10]);
         buf.append_from_slice(&[11, 12, 13, 14, 15]);
+
+        // Try to copy fewer bytes. Ensure it doesn't overrun
         let mut dest = [0; 15];
-        buf.copy_to_slice(15, &mut dest);
-        assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        let copied = buf.copy_to_slice(12, &mut dest);
+        assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0, 0, 0]);
         assert_eq!(buf.len(), 15);
+        assert_eq!(copied, 12);
+
+        // Try to copy more bytes than are in the buffer. Ensure it
+        // returns a lesser count.
+        let mut dest = [0; 15];
+        let copied = buf.copy_to_slice(20, &mut dest);
+        assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        assert_eq!(copied, 15);
     }
 
     #[test]
@@ -296,41 +308,61 @@ mod tests {
         let mut buf = super::NetBuffer::new();
 
         // Fill up the first frag
-        let slice1 = [1; 512];
-        buf.append_from_slice(&[1; 512]);
-        assert_eq!(buf.len(), 512);
+        let slice1 = [1; 500];
+        buf.append_from_slice(&[1; 500]);
+        assert_eq!(buf.len(), 500);
 
-        // Add another frag
-        let slice2 = [2; 512];
-        buf.append_from_slice(&[2; 512]);
-        assert_eq!(buf.len(), 1024);
+        // Add another frag. This will first fill the remainder of the
+        // last frag, then add a new one.
+        let slice2 = [2; 500];
+        buf.append_from_slice(&[2; 500]);
+        assert_eq!(buf.len(), 1000);
 
         // Check the contents
-        let mut dest = [0; 1024];
-        buf.copy_to_slice(1024, &mut dest);
-        assert_eq!(dest[..512], slice1);
-        assert_eq!(dest[512..], slice2);
+        let mut dest = [0; 1000];
+        buf.copy_to_slice(1000, &mut dest);
+        assert_eq!(dest[..500], slice1);
+        assert_eq!(dest[500..], slice2);
     }
 
     #[test]
     fn test_alloc_header() {
         let mut buf = super::NetBuffer::new();
         buf.append_from_slice(&[1; 512]);
+
+        // This will allocate a new fragment on the beginning of the chain.
         buf.alloc_header(20);
         let mut dest = [0; 512];
         buf.copy_to_slice(512, &mut dest);
         assert_eq!(dest[..20], [0; 20]);
         assert_eq!(dest[20..], [1; 492]);
+
+        // This will add to the existing fragment
+        buf.alloc_header(20);
+        let mut dest = [0; 512];
+        buf.copy_to_slice(512, &mut dest);
+        assert_eq!(dest[..40], [0; 40]);
+        assert_eq!(dest[40..], [1; 472]);
     }
 
     #[test]
     fn test_trim_head() {
         let mut buf = super::NetBuffer::new();
-        buf.append_from_slice(&[1; 512]);
+        // Create a slice with an incrementing count
+        let mut data = [0; 512];
+        for i in 0..512 {
+            data[i] = i as u8;
+        }
+
+        buf.append_from_slice(&data);
         buf.trim_head(20);
+
+        // Check the contents
         let mut dest = [0; 512];
         buf.copy_to_slice(512, &mut dest);
-        assert_eq!(dest[..492], [1; 492]);
+        for i in 0..492 {
+            assert_eq!(dest[i], (i + 20) as u8);
+        }
     }
 
     #[test]
@@ -339,16 +371,21 @@ mod tests {
         buf.append_from_slice(&[1; 512]);
         buf.append_from_slice(&[2; 512]);
         buf.append_from_slice(&[3; 512]);
+
+        // This range will chop both the first and last frag
         let mut iter = buf.iter(20, 1200);
         let slice1 = iter.next().unwrap();
         assert_eq!(slice1.len(), 492);
         assert_eq!(slice1[0], 1);
+        assert_eq!(slice1[491], 1);
         let slice2 = iter.next().unwrap();
         assert_eq!(slice2.len(), 512);
         assert_eq!(slice2[0], 2);
+        assert_eq!(slice2[511], 2);
         let slice3 = iter.next().unwrap();
-        assert_eq!(slice3.len(), 196);
+        assert_eq!(slice3.len(), 196); // Not short buf
         assert_eq!(slice3[0], 3);
+        assert_eq!(slice3[195], 3);
         assert!(iter.next().is_none());
     }
 
@@ -371,11 +408,14 @@ mod tests {
         buf1.append_from_slice(&[1; 512]);
         buf1.append_from_slice(&[2; 512]);
         buf1.append_from_slice(&[3; 512]);
+
         let mut buf2 = super::NetBuffer::new();
         buf2.append_from_slice(&[4; 512]);
         buf2.append_from_slice(&[5; 512]);
         buf2.append_from_slice(&[6; 512]);
+
         buf1.append_buffer(buf2);
+
         let mut dest = [0; 1536];
         buf1.copy_to_slice(1536, &mut dest);
         assert_eq!(dest[0..512], [1; 512]);
@@ -390,7 +430,7 @@ mod tests {
         buf1.append_from_slice(&[1; 512]);
         buf1.append_from_slice(&[2; 512]);
         buf1.append_from_slice(&[3; 512]);
-        // 1536
+        // 1536 total bytes
 
         let mut buf2 = super::NetBuffer::new();
         buf2.append_from_slice(&[4; 512]);
@@ -426,11 +466,15 @@ mod tests {
         buf.append_from_slice(&[1; 512]);
         buf.alloc_header(20);
         let header = buf.header_mut();
-        header[0] = 1;
-        header[19] = 2;
-        let header = buf.header();
-        assert_eq!(header[0], 1);
-        assert_eq!(header[19], 2);
+        header[0] = 0xcc;
+        header[19] = 0x55;
+
+        // copy out slices
+        let mut dest = [0; 512];
+        buf.copy_to_slice(512, &mut dest);
+        assert_eq!(dest[0], 0xcc);
+        assert_eq!(dest[19], 0x55);
+        assert_eq!(dest[20], 1);
     }
 
     #[test]
