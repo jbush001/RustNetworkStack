@@ -28,7 +28,7 @@ const EPHEMERAL_PORT_BASE: u16 = 49152;
 const TCP_MTU: usize = 1500;
 
 // XXX hardcoded for now, as this should scale with capacity.
-const WINDOW_SIZE: u16 = 32768;
+const MAX_WINDOW: u16 = 32768;
 
 enum TCPState {
     Closed,
@@ -88,6 +88,10 @@ impl TCPSocket {
         }
     }
 
+    fn get_window_size(&self) -> u16 {
+        MAX_WINDOW - self.receive_queue.len() as u16
+    }
+
     fn handle_packet(
         &mut self,
         packet: buf::NetBuffer,
@@ -123,7 +127,7 @@ impl TCPSocket {
                         self.next_transmit_seq,
                         self.reassembler.get_next_expect(),
                         FLAG_ACK,
-                        WINDOW_SIZE,
+                        self.get_window_size(),
                     );
 
                     // Wake up thread waiting in connect
@@ -176,7 +180,7 @@ impl TCPSocket {
                     self.next_transmit_seq,
                     self.reassembler.get_next_expect(),
                     FLAG_ACK,
-                    WINDOW_SIZE,
+                    self.get_window_size(),
                 );
 
                 RECV_WAIT.notify_all();
@@ -219,7 +223,7 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16)
             guard.next_transmit_seq,
             0,
             FLAG_SYN,
-            32768,
+            guard.get_window_size(),
         );
 
         // Wait until this is connected
@@ -313,7 +317,7 @@ pub fn tcp_write(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) {
         guard.next_transmit_seq,
         guard.reassembler.get_next_expect(),
         FLAG_ACK | FLAG_PSH,
-        WINDOW_SIZE,
+        guard.get_window_size(),
     );
 
     guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(data.len() as u32);

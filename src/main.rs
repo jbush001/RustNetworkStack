@@ -23,6 +23,8 @@ mod udpv4;
 mod util;
 
 use std::io::Read;
+use std::thread::sleep;
+use std::time::Duration;
 
 fn packet_receive_thread() {
     loop {
@@ -69,6 +71,7 @@ fn test_tcp_connect() {
     const REQUEST_BYTES: &[u8] = REQUEST_STRING.as_bytes();
     tcpv4::tcp_write(&mut socket, REQUEST_BYTES);
     loop {
+        sleep(Duration::from_millis(100));
         let mut data = [0; 1500];
         let received = tcpv4::tcp_read(&mut socket, &mut data);
         if received > 0 {
