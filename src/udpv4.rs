@@ -21,9 +21,10 @@ use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::Condvar;
 use std::sync::{Arc, Mutex};
+use std::collections::VecDeque;
 
 pub struct UDPSocket {
-    receive_queue: Vec<(util::IPv4Addr, u16, buf::NetBuffer)>,
+    receive_queue: VecDeque<(util::IPv4Addr, u16, buf::NetBuffer)>,
     port: u16,
 }
 
@@ -39,7 +40,7 @@ lazy_static! {
 impl UDPSocket {
     fn new(port: u16) -> UDPSocket {
         UDPSocket {
-            receive_queue: Vec::new(),
+            receive_queue: VecDeque::new(),
             port: port,
         }
     }
@@ -55,7 +56,7 @@ pub fn udp_open(port: u16) -> Arc<Mutex<UDPSocket>> {
 pub fn udp_recv(socket: &mut Arc<Mutex<UDPSocket>>) -> (util::IPv4Addr, u16, Vec<u8>) {
     let mut guard = socket.lock().unwrap();
     loop {
-        let entry = guard.receive_queue.pop();
+        let entry = guard.receive_queue.pop_front();
         if !entry.is_none() {
             let (source_addr, source_port, buf) = entry.unwrap();
             return (source_addr, source_port, buf.to_vec());
@@ -109,7 +110,7 @@ pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
         .lock()
         .unwrap()
         .receive_queue
-        .push((source_addr, source_port, packet));
+        .push_back((source_addr, source_port, packet));
     RECV_WAIT.notify_all();
 }
 
