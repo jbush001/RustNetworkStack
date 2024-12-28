@@ -15,27 +15,23 @@
 //
 
 ///
-/// Handling for buffering network data.
-/// This module provides a simple abstraction for temporarily storing any
-/// data that is being sent or received by the network stack, including
-/// the packets themselves or any queued receive or transmit data.
+/// This class implements a flexible and performant container for unstructured
+/// data. It is used as temporary storage for data throughout the network stack,
+/// including packets and queued receive and transmit data. The design is
+/// similar to mbufs in the BSD network stack or skbuff in Linux, although this is
+/// implemented to work better specifically with Rust's ownership model.
 ///
-/// This is similar to how mbufs work in the BSD network stack (or, to a
-/// lesser degree, skbuff in Linux)
-/// This has two major design objectives:
-/// 1. Reduce copies. This structure is used both to store packets and
-///    queued data, which allows the former to be appended directly to the
-///    latter without copying.
-/// 2. Avoid fragmentation and optimize allocation. The primary allocation
-///    unit is the fixed sizze BufferFragment, which can in theory be
-///    allocated from a pool. This is not currently implemented.
-///    Although the Box object does have an allocator parameter, it does not
-///    seem to be supported well in Rust.
+/// The intent of this implementation is to minimize copies, avoid external heap
+/// fragmentation, and optimize allocation speed. The base storage unit ia a
+/// fixed-size BufferFragment, which would ideally be allocated from a pool
+/// (although this implementation does not do that yet). These fragments are
+/// chained together to allow buffers to grow arbitrarily.
 ///
 /// Alternatives:
-/// - NetBuffer could also contain an array of pointers to fragments, which
-///   would be more cache friendly and more idiomatic for Rust, but would limit
-///   the maximum size of buffer (potentially workable for many protocols).
+/// - I also considered having NetBuffer contain an array of pointers
+///   to fragments, which would be more idiomatic for Rust and potentially more
+///   cache friendly, but would limit the maximum size of buffer (potentially
+///   workable for many protocols).
 ///
 
 use std::cmp;
@@ -51,6 +47,7 @@ struct BufferFragment {
     next: FragPointer,
 }
 
+// This is the publicly visible abstraction for clients of this API.
 pub struct NetBuffer {
     fragments: FragPointer,
     length: usize,
@@ -89,6 +86,7 @@ impl NetBuffer {
         }
     }
 
+    /// Return the total available data within this buffer.
     pub fn len(&self) -> usize {
         self.length
     }
@@ -114,9 +112,9 @@ impl NetBuffer {
         }
     }
 
-    /// Return the initial frag of the buffer. This is used for reading
-    /// header contents. Note: this slice be larger than the size returned
-    /// by add_header.
+    /// Return a slice pointing to data in the initial fragment of the buffer.
+    /// This is used for reading header contents. Note: this slice may be larger
+    /// than the size returned by add_header.
     pub fn header(&self) -> &[u8] {
         assert!(self.fragments.is_some()); // Shouldn't call on empty buffer
         let head_frag = self.fragments.as_ref().unwrap();
@@ -169,7 +167,7 @@ impl NetBuffer {
         self.length += size;
     }
 
-    /// Remove space at beginning of buffer.
+    /// Remove data from the beginning of buffer.
     pub fn trim_head(&mut self, size: usize) {
         assert!(size <= self.length);
 
@@ -196,6 +194,7 @@ impl NetBuffer {
         assert!(self.fragments.is_some() || self.length == 0);
     }
 
+    /// Add all data in the passed slice to the end of this buffer.
     pub fn append_from_slice(&mut self, data: &[u8]) {
         if data.len() == 0 {
             return;
@@ -232,7 +231,8 @@ impl NetBuffer {
         self.length += data.len();
     }
 
-    /// Opposite of append_from_slice, copy data out of the buffer.
+    /// Copy data out of the buffer into a slice, leaving the NetBuffer
+    /// unmodified.
     pub fn copy_to_slice(&self, dest: &mut [u8], length: usize) -> usize {
         let mut copied = 0;
         let mut iter = self.iter(0, length);
@@ -258,14 +258,17 @@ impl NetBuffer {
         return copied;
     }
 
-    /// Copy data out of another buffer into this one.
+    /// Copy data out of another buffer into this one, leaving the original
+    /// unmodified.
     pub fn append_from_buffer(&mut self, other: &NetBuffer, length: usize) {
         for frag in other.iter(0, length) {
             self.append_from_slice(frag);
         }
     }
 
-    /// This just takes over data from another buffer.
+    /// This just takes over data from another buffer, tacking it onto the
+    /// end. Rust's move semantics kind of shine here, because this
+    /// takes over the storage with no copies.
     pub fn append_buffer(&mut self, other: NetBuffer) {
         self.length += other.length;
         if self.fragments.is_none() {
@@ -289,7 +292,7 @@ impl<'a> Iterator for BufferIterator<'a> {
             return None;
         }
 
-        // Note: we guarantee there is something in current_frag to be copied
+        // Note: We must guarantee is something in current_frag to be copied
         // The setup code iterates over fragments that are entirely skipped.
         let frag = self.current_frag.as_ref().unwrap();
         let slice_length = cmp::min(frag.len() - self.skip, self.remaining);
@@ -367,6 +370,14 @@ mod tests {
     }
 
     #[test]
+    fn test_copy_empty_buffer_to_slice() {
+        let buf = super::NetBuffer::new();
+        let mut dest = [0; 10];
+        let copied = buf.copy_to_slice(&mut dest, 10);
+        assert_eq!(copied, 0);
+    }
+
+    #[test]
     fn test_grow_buffer() {
         let mut buf = super::NetBuffer::new();
 
@@ -391,25 +402,32 @@ mod tests {
     #[test]
     fn test_alloc_header() {
         let mut buf = super::NetBuffer::new();
-        buf.append_from_slice(&[1; 512]);
-        assert!(buf.len() == 512);
+        buf.append_from_slice(&[1; 100]);
+        assert!(buf.len() == 100);
 
-        // This will allocate a new fragment on the beginning of the chain.
+        // This will add a new fragment
         buf.alloc_header(20);
-        assert!(buf.len() == 532);
-        let mut dest = [0; 512];
-        buf.copy_to_slice(&mut dest, 512);
-        assert_eq!(dest[..20], [0; 20]);
-        assert_eq!(dest[20..], [1; 492]);
+        assert_eq!(buf.len(), 120);
+        {
+            let header = buf.header_mut();
+            header[0] = 1;
+            header[19] = 2;
+        }
+        buf.alloc_header(20);
+        assert_eq!(buf.len(), 140);
+        {
+            let header = buf.header_mut();
+            header[0] = 3;
+            header[19] = 4;
+        }
 
-        // This will add to the existing fragment
-        buf.alloc_header(20);
-        assert!(buf.len() == 552);
-        let mut dest = [0; 512];
-        buf.copy_to_slice(&mut dest, 512);
-        assert_eq!(dest[..40], [0; 40]);
-        assert_eq!(dest[40..], [1; 472]);
+        let header = buf.header();
+        assert_eq!(header[0], 3);
+        assert_eq!(header[19], 4);
+        assert_eq!(header[20], 1);
+        assert_eq!(header[39], 2);
     }
+
 
     #[test]
     fn test_trim_head() {
@@ -474,6 +492,14 @@ mod tests {
 
         // Offset past end of buffer
         let mut iter = buf.iter(513, 0);
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_iter4() {
+        // Create iterator on empty buffer
+        let buf = super::NetBuffer::new();
+        let mut iter = buf.iter(0, usize::MAX);
         assert!(iter.next().is_none());
     }
 
@@ -556,31 +582,6 @@ mod tests {
         assert_eq!(dest[0], 0xcc);
         assert_eq!(dest[19], 0x55);
         assert_eq!(dest[20], 1);
-    }
-
-    #[test]
-    fn test_grow_header() {
-        let mut buf = super::NetBuffer::new();
-        buf.alloc_header(20);
-        assert_eq!(buf.len(), 20);
-        {
-            let header = buf.header_mut();
-            header[0] = 1;
-            header[19] = 2;
-        }
-        buf.alloc_header(20);
-        assert_eq!(buf.len(), 40);
-        {
-            let header = buf.header_mut();
-            header[0] = 3;
-            header[19] = 4;
-        }
-
-        let header = buf.header();
-        assert_eq!(header[0], 3);
-        assert_eq!(header[19], 4);
-        assert_eq!(header[20], 1);
-        assert_eq!(header[39], 2);
     }
 
     #[test]
