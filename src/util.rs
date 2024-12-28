@@ -97,6 +97,11 @@ pub fn print_binary(buffer: &[u8]) {
     println!();
 }
 
+pub fn seq_gt(val1: u32, val2: u32) -> bool {
+    let diff = val1.wrapping_sub(val2);
+    diff < 0x80000000
+}
+
 mod tests {
     #[test]
     fn test_compute_ones_comp() {
@@ -181,5 +186,13 @@ mod tests {
         let mut buffer = crate::buf::NetBuffer::new();
         buffer.append_from_slice(&[0x12, 0x34]);
         assert_eq!(super::compute_buffer_ones_comp(0, &buffer), 0x1234);
+    }
+
+    #[test]
+    fn test_seq_gt() {
+        assert_eq!(super::seq_gt(0x00000001, 0x00000000), true);
+        assert_eq!(super::seq_gt(0x00000000, 0x00000001), false);
+        assert_eq!(super::seq_gt(0x7fffffff, 0x80000000), false);
+        assert_eq!(super::seq_gt(0x80000000, 0x7fffffff), true);
     }
 }

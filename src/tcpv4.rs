@@ -190,7 +190,7 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16) -> Arc<Mutex<TCPSoc
             32768,
         );
 
-        guard.next_seq_num += 1;
+        guard.next_seq_num = guard.next_seq_num.wrapping_add(1);
 
         // Wait until this is connected
         while !matches!(guard.state ,TCPState::Established) {
@@ -216,17 +216,17 @@ impl TCPReassembler {
 
     fn add_packet(&mut self, mut packet: buf::NetBuffer, seq_num: u32) -> Option<buf::NetBuffer> {
         if seq_num == self.next_sequence {
-            self.next_sequence += packet.len() as u32;
+            self.next_sequence = self.next_sequence.wrapping_add(packet.len() as u32);
 
             // Check if any of the out-of-order packets can now be reassembled.
             let mut i = 0;
             while i < self.out_of_order.len() {
-                // XXX todo: if this packet is before the current one, remove it.
-                // This is a bit tricky because we need to do a wrapped compare.
-
-                if self.out_of_order[i].0 == self.next_sequence {
+                if util::seq_gt(seq_num, self.out_of_order[i].0) {
+                    // Remove packets before window.
+                    self.out_of_order.remove(i);
+                } else if self.out_of_order[i].0 == self.next_sequence {
                     let (_, ooo_packet) = self.out_of_order.remove(i);
-                    self.next_sequence += ooo_packet.len() as u32;
+                    self.next_sequence = self.next_sequence.wrapping_add(ooo_packet.len() as u32);
                     packet.append_buffer(ooo_packet);
                     i = 0;
                 } else {
@@ -385,7 +385,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_reassemble1() {
+    fn test_reassemble_inorder() {
         // Happy path: we get a packet, it is in order
         let mut reassembler = TCPReassembler::new();
         reassembler.set_next_expect(1234);
@@ -403,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reassemble2() {
+    fn test_reassemble_ooo() {
         // Two packets received out of order.
         let mut reassembler = TCPReassembler::new();
         reassembler.set_next_expect(1000);
@@ -431,5 +431,113 @@ mod tests {
         assert!(data[99] == 1);
         assert!(data[100] == 2);
         assert!(data[199] == 2);
+    }
+
+    #[test]
+    fn test_reassemble_stale1() {
+        // Packet is received before sequence
+        let mut reassembler = TCPReassembler::new();
+        reassembler.set_next_expect(1000);
+
+        let mut packet1 = buf::NetBuffer::new();
+        packet1.append_from_slice(&[1; 100]);
+
+        let result = reassembler.add_packet(packet1, 900);
+        assert!(result.is_none());
+        assert_eq!(reassembler.get_next_expect(), 1000);
+
+        let mut packet2 = buf::NetBuffer::new();
+        packet2.append_from_slice(&[2; 100]);
+        let result = reassembler.add_packet(packet2, 1000);
+        assert!(result.is_some());
+        assert_eq!(reassembler.get_next_expect(), 1100);
+
+        assert_eq!(reassembler.out_of_order.len(), 0);
+    }
+
+    #[test]
+    fn test_reassemble_stale2() {
+        // Packet is received before sequence. We also have an out of order
+        // segment that will be left in the reassembler.
+        let mut reassembler = TCPReassembler::new();
+        reassembler.set_next_expect(1000);
+
+        let mut packet1 = buf::NetBuffer::new();
+        packet1.append_from_slice(&[1; 100]);
+        let result = reassembler.add_packet(packet1, 1200);
+        assert!(result.is_none());
+        assert_eq!(reassembler.get_next_expect(), 1000);
+
+        let mut packet2 = buf::NetBuffer::new();
+        packet2.append_from_slice(&[2; 100]);
+        let result = reassembler.add_packet(packet2, 900);
+        assert!(result.is_none());
+        assert_eq!(reassembler.get_next_expect(), 1000);
+
+        let mut packet3 = buf::NetBuffer::new();
+        packet3.append_from_slice(&[3; 100]);
+        let result = reassembler.add_packet(packet3, 1000);
+        assert!(result.is_some());
+        assert_eq!(reassembler.get_next_expect(), 1100);
+
+        // Check output
+        let new_packet = result.as_ref().unwrap();
+        assert_eq!(new_packet.len(), 100);
+        let mut data = [0u8; 100];
+        new_packet.copy_to_slice(&mut data, 100);
+        assert!(data[0] == 3);
+        assert!(data[99] == 3);
+
+        assert_eq!(reassembler.out_of_order.len(), 1);
+    }
+
+    #[test]
+    fn test_reassemble_wrap() {
+        // Check wrapping case for sequence numbers
+        let mut reassembler = TCPReassembler::new();
+        reassembler.set_next_expect(0xffffff00);
+
+        // Packet before window. This should be removed.
+        let mut packet1 = buf::NetBuffer::new();
+        packet1.append_from_slice(&[1; 0x100]);
+        let result = reassembler.add_packet(packet1, 0xfffffe00);
+        assert!(result.is_none());
+
+        // Fill window, wrap around
+        let mut packet2 = buf::NetBuffer::new();
+        packet2.append_from_slice(&[2; 0x200]);
+        let result = reassembler.add_packet(packet2, 0xffffff00);
+        assert!(result.is_some());
+        assert_eq!(reassembler.get_next_expect(), 0x100);
+
+        let new_packet = result.as_ref().unwrap();
+        assert_eq!(new_packet.len(), 0x200);
+        let mut data = [0u8; 0x200];
+        new_packet.copy_to_slice(&mut data, 0x200);
+        assert!(data[0] == 2);
+        assert!(data[199] == 2);
+
+        assert_eq!(reassembler.out_of_order.len(), 0);
+    }
+
+    #[test]
+    fn test_reassemble_reorder_wrap() {
+        let mut reassembler = TCPReassembler::new();
+        reassembler.set_next_expect(0xfffffe00);
+
+        // This packet will cause a wrap when it's reassembled.
+        // Ensure we are incrementing the sequence number correctly
+        // in the case.
+        let mut packet1 = buf::NetBuffer::new();
+        packet1.append_from_slice(&[1; 0x200]);
+        let result = reassembler.add_packet(packet1, 0xffffff00);
+        assert!(result.is_none());
+
+        // This packet will be in order.
+        let mut packet2 = buf::NetBuffer::new();
+        packet2.append_from_slice(&[2; 0x100]);
+        let result = reassembler.add_packet(packet2, 0xfffffe00);
+        assert!(result.is_some());
+        assert_eq!(reassembler.get_next_expect(), 0x100);
     }
 }
