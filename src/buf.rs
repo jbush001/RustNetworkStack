@@ -244,17 +244,6 @@ impl NetBuffer {
             last_frag.next = other.frags;
         }
     }
-
-    /// Not sure if this will stay forever, but is convenient for now as it's closer to the
-    /// existing API.
-    pub fn to_vec(&self) -> Vec<u8> {
-        let mut vec = Vec::new();
-        for frag in self.iter(0, usize::MAX) {
-            vec.extend_from_slice(frag);
-        }
-
-        vec
-    }
 }
 
 impl<'a> Iterator for BufferIterator<'a> {
@@ -387,19 +376,6 @@ mod tests {
         assert_eq!(slice3[0], 3);
         assert_eq!(slice3[195], 3);
         assert!(iter.next().is_none());
-    }
-
-    #[test]
-    fn test_to_vec() {
-        let mut buf = super::NetBuffer::new();
-        buf.append_from_slice(&[1; 512]);
-        buf.append_from_slice(&[2; 512]);
-        buf.append_from_slice(&[3; 512]);
-        let vec = buf.to_vec();
-        assert_eq!(vec.len(), 1536);
-        assert_eq!(vec[0..512], [1; 512]);
-        assert_eq!(vec[512..1024], [2; 512]);
-        assert_eq!(vec[1024..], [3; 512]);
     }
 
     #[test]

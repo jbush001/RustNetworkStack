@@ -26,6 +26,9 @@ use std::sync::{Arc, Mutex};
 type SocketKey = (util::IPv4Addr, u16, u16);
 const EPHEMERAL_PORT_BASE: u16 = 49152;
 
+// XXX hardcoded for now, as this should scale with capacity.
+const WINDOW_SIZE: u16 = 32768;
+
 enum TCPState {
     Closed,
     SynSent,
@@ -45,6 +48,7 @@ pub struct TCPSocket {
     next_seq_num: u32,
     next_expected_seq: u32,
     state: TCPState,
+    receive_queue: buf::NetBuffer,
 }
 
 lazy_static! {
@@ -68,12 +72,13 @@ impl TCPSocket {
             next_seq_num: 1, // XXX this should be randomized
             next_expected_seq: 0,
             state: TCPState::Closed,
+            receive_queue: buf::NetBuffer::new(),
         }
     }
 
     fn handle_packet(
         &mut self,
-        _packet: buf::NetBuffer,
+        packet: buf::NetBuffer,
         seq_num: u32,
         _ack_num: u32,
         flags: u8
@@ -101,9 +106,35 @@ impl TCPSocket {
                         self.next_seq_num,
                         self.next_expected_seq,
                         FLAG_ACK,
-                        32768,
+                        WINDOW_SIZE,
                     );
+
+                    // Wake up thread waiting in connect
+                    RECV_WAIT.notify_all();
                 }
+            }
+
+            TCPState::Established => {
+                println!("In established state, processing data");
+                if (flags & FLAG_FIN) != 0 {
+                    // XXX hack: should actually go into a closing state.
+                    self.state = TCPState::Closed;
+                    return;
+                }
+
+                if (flags & FLAG_RST) != 0 {
+                    println!("Connection reset");
+                    self.state = TCPState::Closed;
+                    return;
+                }
+
+                if seq_num == self.next_expected_seq {
+                    // XXX Need to handle out of order packets
+                    self.next_expected_seq += packet.len() as u32;
+                }
+
+                self.receive_queue.append_buffer(packet);
+                RECV_WAIT.notify_all();
             }
             _ => {
                 println!("Unhandled state");
@@ -112,6 +143,7 @@ impl TCPSocket {
     }
 }
 
+/// XXX should probably return Option
 pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16) -> Arc<Mutex<TCPSocket>> {
     let local_port = unsafe { NEXT_EPHEMERAL_PORT };
     unsafe {
@@ -129,8 +161,8 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16) -> Arc<Mutex<TCPSoc
         .insert((remote_ip, remote_port, local_port), handle.clone());
 
     {
-        let mut sock = handle.lock().unwrap();
-        sock.state = TCPState::SynSent;
+        let mut guard = handle.lock().unwrap();
+        guard.state = TCPState::SynSent;
 
         // XXX will not retry
         tcp_output(
@@ -138,16 +170,63 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16) -> Arc<Mutex<TCPSoc
             local_port,
             remote_ip,
             remote_port,
-            sock.next_seq_num,
+            guard.next_seq_num,
             0,
             FLAG_SYN,
             32768,
         );
 
-        sock.next_seq_num += 1;
+        guard.next_seq_num += 1;
+
+        // Wait until this is connected
+        while !matches!(guard.state ,TCPState::Established) {
+            guard = RECV_WAIT.wait(guard).unwrap();
+            // XXX this doesn't handle connection errors.
+        }
     }
 
     handle
+}
+
+pub fn tcp_recv(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
+    let mut guard = socket.lock().unwrap();
+    loop {
+        if matches!(guard.state, TCPState::Closed) {
+            return -1;
+        }
+
+        if guard.receive_queue.len() > 0 {
+            println!("Returning data");
+            let got = guard.receive_queue.copy_to_slice(data, usize::MAX);
+            guard.receive_queue.trim_head(got);
+            return got as i32;
+        }
+
+        println!("Waiting for data");
+        guard = RECV_WAIT.wait(guard).unwrap();
+        println!("Woke up");
+    }
+}
+
+// XXX this is a hack for now, as it doesn't handle retransmit or buffering.
+pub fn tcp_send(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) {
+    let mut guard = socket.lock().unwrap();
+    let mut packet = buf::NetBuffer::new();
+    assert!(data.len() < 1460); // There's an MTU in there somewhere.
+    packet.append_from_slice(data);
+
+    tcp_output(
+        packet,
+        guard.local_port,
+        guard.remote_ip,
+        guard.remote_port,
+        guard.next_seq_num,
+        guard.next_expected_seq,
+        FLAG_ACK | FLAG_PSH,
+        WINDOW_SIZE,
+    );
+
+    guard.next_seq_num += data.len() as u32;
 }
 
 //
@@ -173,6 +252,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     let dest_port = util::get_be16(&header[2..4]);
     let seq_num = util::get_be32(&header[4..8]);
     let ack_num = util::get_be32(&header[8..12]);
+    let header_size = ((header[12] >> 4) * 4) as usize;
     let window = util::get_be16(&header[14..16]);
     let flags = header[13];
 
@@ -187,6 +267,8 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         if (flags & FLAG_SYN) != 0 { "S" } else { "-" },
         if (flags & FLAG_FIN) != 0 { "F" } else { "-" }
     );
+
+    packet.trim_head(header_size);
 
     // Lookup socket
     let mut port_map_guard = PORT_MAP.lock().unwrap();
