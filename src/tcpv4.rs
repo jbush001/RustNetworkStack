@@ -169,14 +169,14 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16) -> Arc<Mutex<TCPSoc
 //    +---------------------------------------------------------------+
 //
 
-pub fn tcp_input(packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
-    let payload = packet.payload();
-    let source_port = util::get_be16(&payload[0..2]);
-    let dest_port = util::get_be16(&payload[2..4]);
-    let seq_num = util::get_be32(&payload[4..8]);
-    let ack_num = util::get_be32(&payload[8..12]);
-    let window = util::get_be16(&payload[14..16]);
-    let flags = payload[13];
+pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
+    let header = packet.header_mut();
+    let source_port = util::get_be16(&header[0..2]);
+    let dest_port = util::get_be16(&header[2..4]);
+    let seq_num = util::get_be32(&header[4..8]);
+    let ack_num = util::get_be32(&header[8..12]);
+    let window = util::get_be16(&header[14..16]);
+    let flags = header[13];
 
     println!("source port {} dest port {}", source_port, dest_port);
     println!("sequence {} ack {}", seq_num, ack_num);
@@ -228,17 +228,18 @@ pub fn tcp_output(
     flags: u8,
     window: u16,
 ) {
-    packet.add_header(TCP_HEADER_LEN);
-    let payload = packet.mut_payload();
-    let length = payload.len() as u16;
-
-    util::set_be16(&mut payload[0..2], source_port);
-    util::set_be16(&mut payload[2..4], dest_port);
-    util::set_be32(&mut payload[4..8], seq_num);
-    util::set_be32(&mut payload[8..12], ack_num);
-    payload[12] = ((TCP_HEADER_LEN / 4) << 4) as u8; // Data offset
-    payload[13] = flags;
-    util::set_be16(&mut payload[14..16], window);
+    packet.alloc_header(TCP_HEADER_LEN);
+    let length = packet.len() as u16;
+    {
+        let header = packet.header_mut();
+        util::set_be16(&mut header[0..2], source_port);
+        util::set_be16(&mut header[2..4], dest_port);
+        util::set_be32(&mut header[4..8], seq_num);
+        util::set_be32(&mut header[8..12], ack_num);
+        header[12] = ((TCP_HEADER_LEN / 4) << 4) as u8; // Data offset
+        header[13] = flags;
+        util::set_be16(&mut header[14..16], window);
+    }
 
     // Compute checksum
     // First need to create a pseudo header
@@ -249,9 +250,11 @@ pub fn tcp_output(
     pseudo_header[9] = ipv4::PROTO_TCP; // Protocol
     util::set_be16(&mut pseudo_header[10..12], length); // TCP length (header + data)
 
-    let ph_sum = util::compute_ones_complement(0, &pseudo_header);
-    let checksum = util::compute_ones_complement(ph_sum, &payload[..length as usize]) ^ 0xffff;
-    util::set_be16(&mut payload[16..18], checksum);
+    let ph_sum = util::compute_ones_comp(0, &pseudo_header);
+    let checksum = packet.compute_ones_comp(ph_sum) ^ 0xffff;
+
+    let header = packet.header_mut();
+    util::set_be16(&mut header[16..18], checksum);
 
     ipv4::ip_output(packet, ipv4::PROTO_TCP, dest_ip);
 }

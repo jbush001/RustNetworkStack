@@ -58,7 +58,7 @@ pub fn udp_recv(socket: &mut Arc<Mutex<UDPSocket>>) -> (util::IPv4Addr, u16, Vec
         let entry = guard.receive_queue.pop();
         if !entry.is_none() {
             let (source_addr, source_port, buf) = entry.unwrap();
-            return (source_addr, source_port, buf.payload().to_vec());
+            return (source_addr, source_port, buf.to_vec());
         }
 
         // Need to wait for more data
@@ -88,11 +88,11 @@ pub fn udp_send(
 const UDP_HEADER_LEN: usize = 8;
 
 pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
-    let payload = packet.payload();
-    let source_port = util::get_be16(&payload[0..2]);
-    let dest_port = util::get_be16(&payload[2..4]);
-    let length = util::get_be16(&payload[4..6]);
-    packet.remove_header(UDP_HEADER_LEN);
+    let header = packet.header();
+    let source_port = util::get_be16(&header[0..2]);
+    let dest_port = util::get_be16(&header[2..4]);
+    let length = util::get_be16(&header[4..6]);
+    packet.trim_head(UDP_HEADER_LEN);
 
     println!("Source port {} dest port {}", source_port, dest_port);
     println!("Length {}", length);
@@ -119,13 +119,13 @@ fn udp_output(
     source_port: u16,
     dest_port: u16,
 ) {
-    packet.add_header(UDP_HEADER_LEN);
-    let payload = packet.mut_payload();
-    let length = payload.len() as u16;
-    util::set_be16(&mut payload[0..2], source_port);
-    util::set_be16(&mut payload[2..4], dest_port);
-    util::set_be16(&mut payload[4..6], length);
-    util::set_be16(&mut payload[6..8], 0); // Skip computing checksum
+    packet.alloc_header(UDP_HEADER_LEN);
+    let length = packet.len() as u16;
+    let header = packet.header_mut();
+    util::set_be16(&mut header[0..2], source_port);
+    util::set_be16(&mut header[2..4], dest_port);
+    util::set_be16(&mut header[4..6], length);
+    util::set_be16(&mut header[6..8], 0); // Skip computing checksum
 
     ipv4::ip_output(packet, ipv4::PROTO_UDP, dest_addr);
 }

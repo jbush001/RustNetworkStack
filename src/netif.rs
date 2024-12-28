@@ -34,29 +34,31 @@ pub fn init() {
 }
 
 pub fn recv_packet() -> buf::NetBuffer {
-    let mut packet = buf::NetBuffer::new();
-    unsafe {
-        let (buffer, length) = packet.start_read();
-        let result = tun_recv(buffer, length);
-        if result <= 0 {
-            println!("Error {} reading from TUN interface", result);
-            std::process::exit(1);
-        }
-
-        packet.end_read(result as usize);
+    // Use a temporary buffer, which will result in an extra copy, but is
+    // compatible with the NetBuffer API.
+    // XXX Optimize this at some point.
+    let mut readbuf = [0u8; 2048];
+    let result = unsafe { tun_recv(readbuf.as_mut_ptr(), readbuf.len()) };
+    if result <= 0 {
+        println!("Error {} reading from TUN interface", result);
+        std::process::exit(1);
     }
+
+    let mut packet = buf::NetBuffer::new();
+    packet.append_from_slice(&readbuf[..result as usize]);
 
     packet
 }
 
 pub fn send_packet(packet: buf::NetBuffer) {
-    unsafe {
-        let payload = packet.payload();
-        let result = tun_send(payload.as_ptr(), payload.len());
-        if result <= 0 {
-            println!("Error {} writing to TUN interface", result);
-            std::process::exit(1);
-        }
+    let mut writebuf = [0u8; 2048];
+    let packet_length = packet.len();
+    assert!(packet_length <= writebuf.len());
+    packet.copy_to_slice(usize::MAX, &mut writebuf);
+    let result = unsafe { tun_send(writebuf.as_ptr(), packet_length) };
+    if result <= 0 {
+        println!("Error {} writing to TUN interface", result);
+        std::process::exit(1);
     }
 }
 

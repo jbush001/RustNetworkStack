@@ -46,28 +46,28 @@ const DEFAULT_TTL: u8 = 64;
 //    +-----------------------------------------------+---------------+
 
 pub fn ip_input(mut packet: buf::NetBuffer) {
-    let payload = packet.payload();
-    let version = (payload[0] as u8) >> 4;
+    let header = packet.header();
+    let version = (header[0] as u8) >> 4;
     if version != 4 {
         return;
     }
 
-    let header_len = (((payload[0] as u8) & 0xf) as usize) * 4;
-    let checksum = util::compute_checksum(&payload[..header_len]);
+    let header_len = (((header[0] as u8) & 0xf) as usize) * 4;
+    let checksum = util::compute_checksum(&header[..header_len]);
     if checksum != 0 {
         println!("IP checksum error {:04x}", checksum);
         return;
     }
 
-    let protocol = payload[9] as u8;
-    let source_addr = util::get_be32(&payload[12..16]);
-    let dest_addr = util::get_be32(&payload[16..20]);
+    let protocol = header[9] as u8;
+    let source_addr = util::get_be32(&header[12..16]);
+    let dest_addr = util::get_be32(&header[16..20]);
 
     println!("Version {}", version);
     println!("Protocol {}", protocol);
     println!("Source addr {}", util::ip_to_str(source_addr));
     println!("Dest addr {}", util::ip_to_str(dest_addr));
-    packet.remove_header(header_len);
+    packet.trim_head(header_len);
 
     match protocol {
         PROTO_ICMP => icmpv4::icmp_input(packet, source_addr),
@@ -78,25 +78,25 @@ pub fn ip_input(mut packet: buf::NetBuffer) {
 }
 
 pub fn ip_output(mut packet: buf::NetBuffer, protocol: u8, dest_addr: util::IPv4Addr) {
-    packet.add_header(IP_HEADER_LEN);
-    let payload = packet.mut_payload();
-    let packet_length = payload.len() as u16;
+    packet.alloc_header(IP_HEADER_LEN);
+    let packet_length = packet.len() as u16;
+    let header = packet.header_mut();
 
-    payload[0] = 0x45; // Version/IHL
-    util::set_be16(&mut payload[2..4], packet_length); // Total Length
+    header[0] = 0x45; // Version/IHL
+    util::set_be16(&mut header[2..4], packet_length); // Total Length
 
     util::set_be16(
-        &mut payload[4..6], // ID
+        &mut header[4..6], // ID
         unsafe { NEXT_PACKET_ID.fetch_add(1, Ordering::AcqRel) },
     );
 
-    payload[8] = DEFAULT_TTL; // TTL
-    payload[9] = protocol; // Protocol
-    util::set_be32(&mut payload[12..16], netif::get_ipaddr()); // Source Address
-    util::set_be32(&mut payload[16..24], dest_addr); // Destination Address
+    header[8] = DEFAULT_TTL; // TTL
+    header[9] = protocol; // Protocol
+    util::set_be32(&mut header[12..16], netif::get_ipaddr()); // Source Address
+    util::set_be32(&mut header[16..24], dest_addr); // Destination Address
 
-    let checksum = util::compute_checksum(&payload[..IP_HEADER_LEN]);
-    util::set_be16(&mut payload[10..12], checksum);
+    let checksum = util::compute_checksum(&header[..IP_HEADER_LEN]);
+    util::set_be16(&mut header[10..12], checksum);
 
     netif::send_packet(packet);
 }

@@ -18,7 +18,7 @@ pub type IPv4Addr = u32;
 
 // Compute one's complement sum, per RFV 1071
 // https://datatracker.ietf.org/doc/html/rfc1071
-pub fn compute_ones_complement(in_checksum: u16, buffer: &[u8]) -> u16 {
+pub fn compute_ones_comp(in_checksum: u16, buffer: &[u8]) -> u16 {
     let mut checksum: u32 = in_checksum as u32;
 
     let mut i = 0;
@@ -39,7 +39,7 @@ pub fn compute_ones_complement(in_checksum: u16, buffer: &[u8]) -> u16 {
 }
 
 pub fn compute_checksum(buffer: &[u8]) -> u16 {
-    0xffff ^ compute_ones_complement(0, buffer)
+    0xffff ^ compute_ones_comp(0, buffer)
 }
 
 pub fn get_be16(buffer: &[u8]) -> u16 {

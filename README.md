@@ -2,9 +2,19 @@ This is a user space TCP/IP network stack (work in progress).
 
 It's my first real Rust program (other than simple tutorials). I've
 been wanting to dig into Rust more deeply with a more substantial project
-for a while, and this one seemed like an interesting challenge. *I have
+for a while, and this one seemed like an interesting challenge. I have
 written a network stack before: I coded the one on the T-Mobile Sidekick
-at Danger from scratch many years ago, but that was in C.*
+at Danger from scratch many years ago, but that was in C. I've
+used many languages in my career, and it's often just a matter of adapting
+to a new syntax, but Rust has some concepts that are fundamentally
+different than most other languages and it's been fun trying to adapt to them.
+
+I've also recently gotten access to Github Copilot and have been using
+it heavily on this, which has been an interesting experience. It seems
+to struggle with the reasoning about borrow checker as much as I do,
+often generating obviously incorrect code. But when it works, it is magical.
+I'm dubious this will replace programmers in the short term as some have
+predicted, but I'm intrigued by it as a teaching tool.
 
 This uses the TUN/TAP driver on Linux to provide a network interface. These
 drivers present a virtual network interface (akin to plugging in an Ethernet

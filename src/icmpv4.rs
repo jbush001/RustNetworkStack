@@ -31,28 +31,33 @@ const ICMP_ECHO_REPLY: u8 = 0;
 const ICMP_HEADER_LEN: usize = 4;
 
 pub fn icmp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
-    let payload = packet.payload();
-    let checksum = util::compute_checksum(&payload);
+    let header = packet.header();
+    let checksum = packet.compute_ones_comp(0) ^ 0xffff;
     if checksum != 0 {
         print!("ICMP checksum error");
         return;
     }
 
-    let packet_type = payload[0];
-    packet.remove_header(ICMP_HEADER_LEN);
+    let packet_type = header[0];
+    packet.trim_head(ICMP_HEADER_LEN);
     if packet_type == ICMP_ECHO_REQUEST {
         // Send a response
         let mut response = buf::NetBuffer::new();
-        response.append_from_slice(packet.payload());
+        response.append_from_buffer(&packet, usize::MAX);
         icmp_output(response, ICMP_ECHO_REPLY, source_ip);
     }
 }
 
 pub fn icmp_output(mut packet: buf::NetBuffer, packet_type: u8, dest_addr: util::IPv4Addr) {
-    packet.add_header(ICMP_HEADER_LEN);
-    let payload = packet.mut_payload();
-    payload[0] = packet_type;
-    let checksum = util::compute_checksum(payload);
-    util::set_be16(&mut payload[2..4], checksum);
+    packet.alloc_header(ICMP_HEADER_LEN);
+    {
+        let header = packet.header_mut();
+        header[0] = packet_type;
+    }
+
+    let checksum = packet.compute_ones_comp(0) ^ 0xffff;
+
+    let header = packet.header_mut();
+    util::set_be16(&mut header[2..4], checksum);
     ipv4::ip_output(packet, ipv4::PROTO_ICMP, dest_addr);
 }

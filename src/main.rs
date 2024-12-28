@@ -25,9 +25,7 @@ mod util;
 fn packet_receive_thread() {
     loop {
         let packet = netif::recv_packet();
-        let payload = packet.payload();
-        println!("Received buf ({} bytes):", payload.len());
-        util::print_binary(payload);
+        println!("Received buf ({} bytes):", packet.len());
         ipv4::ip_input(packet);
     }
 }
