@@ -236,6 +236,9 @@ impl TCPReassembler {
 
             Some(packet)
         } else {
+            // Note that this doesn't bother to order these or anything. I assume
+            // this case is infrequent enough that any optimization would be
+            // lost in the noise.
             self.out_of_order.push((seq_num, packet));
             None
         }
@@ -540,4 +543,120 @@ mod tests {
         assert!(result.is_some());
         assert_eq!(reassembler.get_next_expect(), 0x100);
     }
+
+    #[test]
+    fn test_reassemble_multiple() {
+        // Multiple packets get reassembled in one pass.
+        let mut reassembler = TCPReassembler::new();
+        reassembler.set_next_expect(1000);
+
+        let mut packet1 = buf::NetBuffer::new();
+        packet1.append_from_slice(&[1; 100]);
+
+        let mut packet2 = buf::NetBuffer::new();
+        packet2.append_from_slice(&[2; 100]);
+
+        let mut packet3 = buf::NetBuffer::new();
+        packet3.append_from_slice(&[3; 100]);
+
+        let result = reassembler.add_packet(packet2, 1100);
+        assert!(result.is_none());
+        assert_eq!(reassembler.get_next_expect(), 1000);
+
+        let result = reassembler.add_packet(packet3, 1200);
+        assert!(result.is_none());
+        assert_eq!(reassembler.get_next_expect(), 1000);
+
+        let result = reassembler.add_packet(packet1, 1000);
+        assert!(result.is_some());
+        assert_eq!(reassembler.get_next_expect(), 1300);
+
+        let new_packet = result.as_ref().unwrap();
+        assert_eq!(new_packet.len(), 300);
+
+        let mut data = [0u8; 300];
+        new_packet.copy_to_slice(&mut data, 300);
+        assert!(data[0] == 1);
+        assert!(data[99] == 1);
+        assert!(data[100] == 2);
+        assert!(data[199] == 2);
+        assert!(data[200] == 3);
+        assert!(data[299] == 3);
+    }
+
+    #[test]
+    fn test_reassemble_overlap1() {
+        // It's possible a packet is not in order but overlaps
+        // the current space. We will just drop it.
+
+        let mut reassembler = TCPReassembler::new();
+        reassembler.set_next_expect(1000);
+
+        let mut packet2 = buf::NetBuffer::new();
+        packet2.append_from_slice(&[2; 100]);
+
+        let result = reassembler.add_packet(packet2, 1100);
+        assert!(result.is_none());
+        assert_eq!(reassembler.get_next_expect(), 1000);
+
+        let mut packet1_prime = buf::NetBuffer::new();
+        packet1_prime.append_from_slice(&[3; 150]);
+        let result = reassembler.add_packet(packet1_prime, 1000);
+        assert!(result.is_some());
+        assert_eq!(reassembler.get_next_expect(), 1150);
+
+        let new_packet = result.as_ref().unwrap();
+        assert_eq!(new_packet.len(), 150);
+
+        let mut data = [0u8; 150];
+        new_packet.copy_to_slice(&mut data, 150);
+        assert!(data[0] == 3);
+        assert!(data[99] == 3);
+        assert!(data[100] == 3);
+        assert!(data[149] == 3);
+
+        // Ensure the previous one was removed.
+        assert_eq!(reassembler.out_of_order.len(), 1);
+    }
+
+    #[test]
+    fn test_reassemble_overlap2() {
+        // Another overlap case, but the overlapping packet was received
+        // out of order.
+        let mut reassembler = TCPReassembler::new();
+        reassembler.set_next_expect(1000);
+
+        let mut packet3 = buf::NetBuffer::new();
+        packet3.append_from_slice(&[3; 100]);
+        let result = reassembler.add_packet(packet3, 1200);
+        assert!(result.is_none());
+        assert_eq!(reassembler.get_next_expect(), 1000);
+
+        let mut packet2 = buf::NetBuffer::new();
+        packet2.append_from_slice(&[2; 150]); // Note this overlaps packet 3
+        let result = reassembler.add_packet(packet2, 1100);
+        assert!(result.is_none());
+        assert_eq!(reassembler.get_next_expect(), 1000);
+
+        // Now packet 1 comes in and completes. Packet 3 will be dropped.
+        let mut packet1 = buf::NetBuffer::new();
+        packet1.append_from_slice(&[1; 100]);
+        let result = reassembler.add_packet(packet1, 1000);
+        assert!(result.is_some());
+        assert_eq!(reassembler.get_next_expect(), 1250);
+
+        let new_packet = result.as_ref().unwrap();
+        assert_eq!(new_packet.len(), 250);
+
+        let mut data = [0u8; 250];
+        new_packet.copy_to_slice(&mut data, 250);
+        assert!(data[0] == 1);
+        assert!(data[99] == 1);
+        assert!(data[100] == 2);
+        assert!(data[249] == 2);
+
+        // Ensure the previous one was removed.
+        assert_eq!(reassembler.out_of_order.len(), 1);
+    }
 }
+

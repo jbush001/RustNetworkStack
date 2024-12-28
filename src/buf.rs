@@ -633,4 +633,83 @@ mod tests {
         buf.trim_head(10); // This will remove part of the header
         assert_eq!(buf.len(), 522);
     }
+
+    #[test]
+    fn test_receive_flow() {
+        // Run sequence of operations that happens when receiving a packet to
+        // ensure there are no bad interactions between them.
+        let mut buf = super::NetBuffer::new();
+        let mut data = [0; 512];
+        for i in 0..512 {
+            data[i] = i as u8;
+        }
+
+        buf.append_from_slice(&data);
+        assert_eq!(buf.len(), 512);
+
+        // Process protocol layers
+        let x = buf.header();
+        assert_eq!(x[5], 5);
+        buf.trim_head(40);
+        assert_eq!(buf.len(), 472);
+        let y = buf.header();
+        assert_eq!(y[0], 40);
+        buf.trim_head(20);
+        assert_eq!(buf.len(), 452);
+
+        // Append
+        let mut receive_queue = super::NetBuffer::new();
+        receive_queue.append_buffer(buf);
+        assert_eq!(receive_queue.len(), 452);
+
+        // Read
+        let mut dest = [0; 452];
+        receive_queue.copy_to_slice(&mut dest, 452);
+        for i in 0..452 {
+            assert_eq!(dest[i], (i + 60) as u8);
+        }
+
+        receive_queue.trim_head(452);
+        assert_eq!(receive_queue.len(), 0);
+    }
+
+    #[test]
+    fn test_transmit_flow() {
+        // Run sequence of operations that happens when transmitting a packet to
+        // ensure there are no bad interactions between them.
+
+        // Create a packet
+        let mut buf = super::NetBuffer::new();
+        let mut data = [0; 512];
+        for i in 0..512 {
+            data[i] = i as u8;
+        }
+
+        buf.append_from_slice(&data);
+        assert_eq!(buf.len(), 512);
+
+        // Process protocol layers
+        buf.alloc_header(40);
+        assert_eq!(buf.len(), 552);
+        let x = buf.header_mut();
+        x[0] = 100;
+        x[39] = 102;
+        buf.alloc_header(20);
+        assert_eq!(buf.len(), 572);
+        let y = buf.header_mut();
+        y[0] = 103;
+        y[19] = 104;
+
+        // Transmit
+        let mut out_data = [0; 572];
+        buf.copy_to_slice(&mut out_data, 572);
+        assert_eq!(out_data[0], 103);
+        assert_eq!(out_data[19], 104);
+        assert_eq!(out_data[20], 100);
+        assert_eq!(out_data[59], 102);
+        assert_eq!(out_data[60], 0);
+        assert_eq!(out_data[67], 7);
+        assert_eq!(out_data[570], 254);
+        assert_eq!(out_data[571], 255);
+    }
 }
