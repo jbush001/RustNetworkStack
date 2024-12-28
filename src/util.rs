@@ -85,3 +85,81 @@ pub fn print_binary(buffer: &[u8]) {
 
     println!();
 }
+
+mod tests {
+    #[test]
+    fn test_compute_ones_comp() {
+        assert_eq!(super::compute_ones_comp(0, &[0x00, 0x00]), 0);
+        assert_eq!(super::compute_ones_comp(0, &[0x00, 0x01]), 0x1);
+        assert_eq!(super::compute_ones_comp(0, &[0x00, 0xff]), 0xff);
+        assert_eq!(super::compute_ones_comp(0, &[0xff, 0x23, 0xef, 0x55]), 0xee79);
+    }
+
+    #[test]
+    fn test_compute_checksum() {
+        assert_eq!(super::compute_checksum(&[0x00, 0x00]), 0xffff);
+        assert_eq!(super::compute_checksum(&[0x00, 0x01]), 0xfffe);
+        assert_eq!(super::compute_checksum(&[0x00, 0xff]), 0xff00);
+        assert_eq!(super::compute_checksum(&[0xff, 0x23, 0xef, 0x55]), 0x1186);
+    }
+
+    #[test]
+    fn test_get_be16() {
+        assert_eq!(super::get_be16(&[0x00, 0x00]), 0x0000);
+        assert_eq!(super::get_be16(&[0x35, 0xa5]), 0x35a5);
+    }
+
+    #[test]
+    fn test_get_be32() {
+        assert_eq!(super::get_be32(&[0xde, 0xad, 0xbe, 0xef]), 0xdeadbeef);
+        assert_eq!(super::get_be32(&[0x00, 0x00, 0x00, 0x01]), 0x00000001);
+        assert_eq!(super::get_be32(&[0x00, 0x00, 0x00, 0xff]), 0x000000ff);
+        assert_eq!(super::get_be32(&[0x00, 0x00, 0xff, 0x00]), 0x0000ff00);
+        assert_eq!(super::get_be32(&[0x00, 0xff, 0x00, 0x00]), 0x00ff0000);
+        assert_eq!(super::get_be32(&[0xff, 0x00, 0x00, 0x00]), 0xff000000);
+    }
+
+    #[test]
+    fn test_set_be16() {
+        let mut buffer = [0u8; 2];
+        super::set_be16(&mut buffer, 0x0000);
+        assert_eq!(buffer, [0x00, 0x00]);
+        super::set_be16(&mut buffer, 0x0001);
+        assert_eq!(buffer, [0x00, 0x01]);
+        super::set_be16(&mut buffer, 0x00ff);
+        assert_eq!(buffer, [0x00, 0xff]);
+        super::set_be16(&mut buffer, 0x0100);
+        assert_eq!(buffer, [0x01, 0x00]);
+        super::set_be16(&mut buffer, 0xffff);
+        assert_eq!(buffer, [0xff, 0xff]);
+    }
+
+    #[test]
+    fn test_set_be32() {
+        let mut buffer = [0u8; 4];
+        super::set_be32(&mut buffer, 0x00000000);
+        assert_eq!(buffer, [0x00, 0x00, 0x00, 0x00]);
+        super::set_be32(&mut buffer, 0x00000001);
+        assert_eq!(buffer, [0x00, 0x00, 0x00, 0x01]);
+        super::set_be32(&mut buffer, 0x000000ff);
+        assert_eq!(buffer, [0x00, 0x00, 0x00, 0xff]);
+        super::set_be32(&mut buffer, 0x00000100);
+        assert_eq!(buffer, [0x00, 0x00, 0x01, 0x00]);
+        super::set_be32(&mut buffer, 0x0000ffff);
+        assert_eq!(buffer, [0x00, 0x00, 0xff, 0xff]);
+        super::set_be32(&mut buffer, 0x00010000);
+        assert_eq!(buffer, [0x00, 0x01, 0x00, 0x00]);
+        super::set_be32(&mut buffer, 0x00ffffff);
+        assert_eq!(buffer, [0x00, 0xff, 0xff, 0xff]);
+        super::set_be32(&mut buffer, 0x01000000);
+        assert_eq!(buffer, [0x01, 0x00, 0x00, 0x00]);
+        super::set_be32(&mut buffer, 0xdeadbeef);
+        assert_eq!(buffer, [0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn test_ip_to_str() {
+        assert_eq!(super::ip_to_str(0x12345678), "18.52.86.120");
+    }
+}
+
