@@ -28,16 +28,8 @@ const EPHEMERAL_PORT_BASE: u16 = 49152;
 
 enum TCPState {
     Closed,
-    Listen,
     SynSent,
-    SynReceived,
     Established,
-    FinWait1,
-    FinWait2,
-    CloseWait,
-    Closing,
-    LastAck,
-    TimeWait,
 }
 
 const FLAG_FIN: u8 = 1;
@@ -79,7 +71,13 @@ impl TCPSocket {
         }
     }
 
-    fn handle_packet(&mut self, packet: buf::NetBuffer, seq_num: u32, ack_num: u32, flags: u8) {
+    fn handle_packet(
+        &mut self,
+        _packet: buf::NetBuffer,
+        seq_num: u32,
+        _ack_num: u32,
+        flags: u8
+    ) {
         match self.state {
             TCPState::SynSent => {
                 if (flags & FLAG_RST) != 0 {
@@ -251,7 +249,7 @@ pub fn tcp_output(
     util::set_be16(&mut pseudo_header[10..12], length); // TCP length (header + data)
 
     let ph_sum = util::compute_ones_comp(0, &pseudo_header);
-    let checksum = packet.compute_ones_comp(ph_sum) ^ 0xffff;
+    let checksum = util::compute_buffer_ones_comp(ph_sum, &packet) ^ 0xffff;
 
     let header = packet.header_mut();
     util::set_be16(&mut header[16..18], checksum);

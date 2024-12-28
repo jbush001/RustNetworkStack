@@ -32,7 +32,7 @@ const ICMP_HEADER_LEN: usize = 4;
 
 pub fn icmp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     let header = packet.header();
-    let checksum = packet.compute_ones_comp(0) ^ 0xffff;
+    let checksum = util::compute_buffer_ones_comp(0, &packet) ^ 0xffff;
     if checksum != 0 {
         print!("ICMP checksum error");
         return;
@@ -55,7 +55,7 @@ pub fn icmp_output(mut packet: buf::NetBuffer, packet_type: u8, dest_addr: util:
         header[0] = packet_type;
     }
 
-    let checksum = packet.compute_ones_comp(0) ^ 0xffff;
+    let checksum = util::compute_buffer_ones_comp(0, &packet) ^ 0xffff;
 
     let header = packet.header_mut();
     util::set_be16(&mut header[2..4], checksum);

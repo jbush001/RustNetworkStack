@@ -14,21 +14,23 @@
 // limitations under the License.
 //
 
+use crate::buf;
+
 pub type IPv4Addr = u32;
 
 // Compute one's complement sum, per RFV 1071
 // https://datatracker.ietf.org/doc/html/rfc1071
-pub fn compute_ones_comp(in_checksum: u16, buffer: &[u8]) -> u16 {
+pub fn compute_ones_comp(in_checksum: u16, slice: &[u8]) -> u16 {
     let mut checksum: u32 = in_checksum as u32;
 
     let mut i = 0;
-    while i < buffer.len() - 1 {
-        checksum += u16::from_be_bytes([buffer[i], buffer[i + 1]]) as u32;
+    while i < slice.len() - 1 {
+        checksum += u16::from_be_bytes([slice[i], slice[i + 1]]) as u32;
         i += 2;
     }
 
-    if i < buffer.len() {
-        checksum += buffer[i] as u32;
+    if i < slice.len() {
+        checksum += slice[i] as u32;
     }
 
     while checksum > 0xffff {
@@ -38,8 +40,17 @@ pub fn compute_ones_comp(in_checksum: u16, buffer: &[u8]) -> u16 {
     checksum as u16
 }
 
-pub fn compute_checksum(buffer: &[u8]) -> u16 {
-    0xffff ^ compute_ones_comp(0, buffer)
+pub fn compute_checksum(slice: &[u8]) -> u16 {
+    0xffff ^ compute_ones_comp(0, slice)
+}
+
+pub fn compute_buffer_ones_comp(initial_sum: u16, buffer: &buf::NetBuffer) -> u16 {
+    let mut sum = initial_sum;
+    for frag in buffer.iter(0, usize::MAX) {
+        sum = compute_ones_comp(sum, frag);
+    }
+
+    sum
 }
 
 pub fn get_be16(buffer: &[u8]) -> u16 {
@@ -92,7 +103,10 @@ mod tests {
         assert_eq!(super::compute_ones_comp(0, &[0x00, 0x00]), 0);
         assert_eq!(super::compute_ones_comp(0, &[0x00, 0x01]), 0x1);
         assert_eq!(super::compute_ones_comp(0, &[0x00, 0xff]), 0xff);
-        assert_eq!(super::compute_ones_comp(0, &[0xff, 0x23, 0xef, 0x55]), 0xee79);
+        assert_eq!(
+            super::compute_ones_comp(0, &[0xff, 0x23, 0xef, 0x55]),
+            0xee79
+        );
     }
 
     #[test]
@@ -161,5 +175,11 @@ mod tests {
     fn test_ip_to_str() {
         assert_eq!(super::ip_to_str(0x12345678), "18.52.86.120");
     }
-}
 
+    #[test]
+    fn test_compute_packet_checksum() {
+        let mut buffer = crate::buf::NetBuffer::new();
+        buffer.append_from_slice(&[0x12, 0x34]);
+        assert_eq!(super::compute_buffer_ones_comp(0, &buffer), 0x1234);
+    }
+}

@@ -20,8 +20,7 @@
 /// in Rust, and with a object-oriented API.
 ///
 
-use std::cmp::min;
-use crate::util;
+use std::cmp;
 
 const FRAG_SIZE: usize = 512;
 
@@ -38,7 +37,7 @@ pub struct NetBuffer {
     frags: FragPointer,
 }
 
-struct BufferIterator<'a> {
+pub struct BufferIterator<'a> {
     current_frag: &'a FragPointer,
     skip: usize,
     remaining: usize,
@@ -61,9 +60,7 @@ impl BufferFragment {
 
 impl NetBuffer {
     pub fn new() -> NetBuffer {
-        NetBuffer {
-            frags: None,
-        }
+        NetBuffer { frags: None }
     }
 
     /// XXX ideally we would keep a variable with the length and update that as
@@ -95,7 +92,7 @@ impl NetBuffer {
         BufferIterator {
             current_frag: current_frag,
             skip: skip,
-            remaining: length
+            remaining: length,
         }
     }
 
@@ -141,10 +138,9 @@ impl NetBuffer {
             return;
         }
 
-
         // There is sufficient space in the first frag to add the header.
         // Adjust the start of the frag head
-        let mut frag = self.frags.as_mut().unwrap();
+        let frag = self.frags.as_mut().unwrap();
         frag.data_start -= size;
 
         // Zero out contents
@@ -196,8 +192,9 @@ impl NetBuffer {
         let mut data_offset = 0;
         while data_offset < data.len() {
             let frag = last_frag.as_mut().unwrap();
-            let copy_len = std::cmp::min(FRAG_SIZE - frag.data_end, data.len() - data_offset);
-            frag.data[frag.data_end..frag.data_end + copy_len].copy_from_slice(&data[data_offset..data_offset + copy_len]);
+            let copy_len = cmp::min(FRAG_SIZE - frag.data_end, data.len() - data_offset);
+            frag.data[frag.data_end..frag.data_end + copy_len]
+                .copy_from_slice(&data[data_offset..data_offset + copy_len]);
             frag.data_end += copy_len;
             data_offset += copy_len;
             if data_offset < data.len() {
@@ -219,7 +216,7 @@ impl NetBuffer {
             }
 
             let slice = next.unwrap();
-            let copy_len = std::cmp::min(slice.len(), length - copied);
+            let copy_len = cmp::min(slice.len(), length - copied);
             dest[copied..copied + copy_len].copy_from_slice(&slice[..copy_len]);
             copied += copy_len;
         }
@@ -246,15 +243,6 @@ impl NetBuffer {
         }
     }
 
-    pub fn compute_ones_comp(&self, initial_sum: u16) -> u16 {
-        let mut sum = initial_sum;
-        for frag in self.iter(0, usize::MAX) {
-            sum = util::compute_ones_comp(sum, frag);
-        }
-
-        sum
-    }
-
     /// Not sure if this will stay forever, but is convenient for now as it's closer to the
     /// existing API.
     pub fn to_vec(&self) -> Vec<u8> {
@@ -278,7 +266,7 @@ impl<'a> Iterator for BufferIterator<'a> {
         // Note: we guarantee there is something in current_frag to be copied
         // The setup code iterates over frags that are entirely skipped.
         let frag = self.current_frag.as_ref().unwrap();
-        let slice_length = min(frag.len() - self.skip, self.remaining);
+        let slice_length = cmp::min(frag.len() - self.skip, self.remaining);
         assert!(slice_length >= self.skip);
         assert!(self.remaining >= slice_length);
         let start_offs = frag.data_start + self.skip;
@@ -291,12 +279,9 @@ impl<'a> Iterator for BufferIterator<'a> {
 }
 
 mod tests {
-
-    use crate::buf::NetBuffer;
-
     #[test]
     fn test_append() {
-        let mut buf = NetBuffer::new();
+        let mut buf = super::NetBuffer::new();
         buf.append_from_slice(&[1, 2, 3, 4, 5]);
         buf.append_from_slice(&[6, 7, 8, 9, 10]);
         buf.append_from_slice(&[11, 12, 13, 14, 15]);
@@ -308,7 +293,7 @@ mod tests {
 
     #[test]
     fn test_grow_buffer() {
-        let mut buf = NetBuffer::new();
+        let mut buf = super::NetBuffer::new();
 
         // Fill up the first frag
         let slice1 = [1; 512];
@@ -329,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_alloc_header() {
-        let mut buf = NetBuffer::new();
+        let mut buf = super::NetBuffer::new();
         buf.append_from_slice(&[1; 512]);
         buf.alloc_header(20);
         let mut dest = [0; 512];
@@ -340,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_trim_head() {
-        let mut buf = NetBuffer::new();
+        let mut buf = super::NetBuffer::new();
         buf.append_from_slice(&[1; 512]);
         buf.trim_head(20);
         let mut dest = [0; 512];
@@ -350,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_iter() {
-        let mut buf = NetBuffer::new();
+        let mut buf = super::NetBuffer::new();
         buf.append_from_slice(&[1; 512]);
         buf.append_from_slice(&[2; 512]);
         buf.append_from_slice(&[3; 512]);
@@ -369,7 +354,7 @@ mod tests {
 
     #[test]
     fn test_to_vec() {
-        let mut buf = NetBuffer::new();
+        let mut buf = super::NetBuffer::new();
         buf.append_from_slice(&[1; 512]);
         buf.append_from_slice(&[2; 512]);
         buf.append_from_slice(&[3; 512]);
@@ -382,11 +367,11 @@ mod tests {
 
     #[test]
     fn test_append_buffer() {
-        let mut buf1 = NetBuffer::new();
+        let mut buf1 = super::NetBuffer::new();
         buf1.append_from_slice(&[1; 512]);
         buf1.append_from_slice(&[2; 512]);
         buf1.append_from_slice(&[3; 512]);
-        let mut buf2 = NetBuffer::new();
+        let mut buf2 = super::NetBuffer::new();
         buf2.append_from_slice(&[4; 512]);
         buf2.append_from_slice(&[5; 512]);
         buf2.append_from_slice(&[6; 512]);
@@ -401,13 +386,13 @@ mod tests {
 
     #[test]
     fn test_append_from_buffer() {
-        let mut buf1 = NetBuffer::new();
+        let mut buf1 = super::NetBuffer::new();
         buf1.append_from_slice(&[1; 512]);
         buf1.append_from_slice(&[2; 512]);
         buf1.append_from_slice(&[3; 512]);
         // 1536
 
-        let mut buf2 = NetBuffer::new();
+        let mut buf2 = super::NetBuffer::new();
         buf2.append_from_slice(&[4; 512]);
         buf2.append_from_slice(&[5; 512]);
         buf2.append_from_slice(&[6; 512]);
@@ -426,7 +411,7 @@ mod tests {
 
     #[test]
     fn test_header() {
-        let mut buf = NetBuffer::new();
+        let mut buf = super::NetBuffer::new();
         buf.append_from_slice(&[1; 512]);
         buf.alloc_header(20);
         let header = buf.header();
@@ -437,7 +422,7 @@ mod tests {
 
     #[test]
     fn test_header_mut() {
-        let mut buf = NetBuffer::new();
+        let mut buf = super::NetBuffer::new();
         buf.append_from_slice(&[1; 512]);
         buf.alloc_header(20);
         let header = buf.header_mut();
@@ -450,7 +435,7 @@ mod tests {
 
     #[test]
     fn test_grow_header() {
-        let mut buf = NetBuffer::new();
+        let mut buf = super::NetBuffer::new();
         buf.alloc_header(20);
         {
             let header = buf.header_mut();
@@ -473,7 +458,7 @@ mod tests {
 
     #[test]
     fn test_trim_head_header1() {
-        let mut buf = NetBuffer::new();
+        let mut buf = super::NetBuffer::new();
         let mut data = [0; 512];
         for i in 0..512 {
             data[i] = i as u8;
@@ -489,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_trim_head_header2() {
-        let mut buf = NetBuffer::new();
+        let mut buf = super::NetBuffer::new();
         let mut data = [0; 512];
         for i in 0..512 {
             data[i] = i as u8;
@@ -506,7 +491,7 @@ mod tests {
 
     #[test]
     fn test_trim_head_header3() {
-        let mut buf = NetBuffer::new();
+        let mut buf = super::NetBuffer::new();
         let mut data = [0; 512];
         for i in 0..512 {
             data[i] = i as u8;
