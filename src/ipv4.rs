@@ -61,12 +61,7 @@ pub fn ip_input(mut packet: buf::NetBuffer) {
 
     let protocol = header[9] as u8;
     let source_addr = util::get_be32(&header[12..16]);
-    let dest_addr = util::get_be32(&header[16..20]);
 
-    println!("Version {}", version);
-    println!("Protocol {}", protocol);
-    println!("Source addr {}", util::ip_to_str(source_addr));
-    println!("Dest addr {}", util::ip_to_str(dest_addr));
     packet.trim_head(header_len);
 
     match protocol {

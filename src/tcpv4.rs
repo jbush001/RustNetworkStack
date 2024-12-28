@@ -46,9 +46,14 @@ pub struct TCPSocket {
     remote_port: u16,
     local_port: u16,
     next_seq_num: u32,
-    next_expected_seq: u32,
     state: TCPState,
     receive_queue: buf::NetBuffer,
+    reassembler: TCPReassembler,
+}
+
+pub struct TCPReassembler {
+    next_sequence: u32,
+    out_of_order: Vec<(u32, buf::NetBuffer)>,
 }
 
 lazy_static! {
@@ -70,9 +75,9 @@ impl TCPSocket {
             remote_port: remote_port,
             local_port: local_port,
             next_seq_num: 1, // XXX this should be randomized
-            next_expected_seq: 0,
             state: TCPState::Closed,
             receive_queue: buf::NetBuffer::new(),
+            reassembler: TCPReassembler::new(),
         }
     }
 
@@ -95,16 +100,15 @@ impl TCPSocket {
                     // XXX check that the ack number is correct
 
                     self.state = TCPState::Established;
-                    self.next_expected_seq = seq_num + 1;
+                    self.reassembler.set_next_expect(seq_num + 1);
 
-                    println!("Connection established");
                     tcp_output(
                         buf::NetBuffer::new(),
                         self.local_port,
                         self.remote_ip,
                         self.remote_port,
                         self.next_seq_num,
-                        self.next_expected_seq,
+                        self.reassembler.get_next_expect(),
                         FLAG_ACK,
                         WINDOW_SIZE,
                     );
@@ -115,7 +119,6 @@ impl TCPSocket {
             }
 
             TCPState::Established => {
-                println!("In established state, processing data");
                 if (flags & FLAG_FIN) != 0 {
                     // XXX hack: should actually go into a closing state.
                     self.state = TCPState::Closed;
@@ -128,12 +131,23 @@ impl TCPSocket {
                     return;
                 }
 
-                if seq_num == self.next_expected_seq {
-                    // XXX Need to handle out of order packets
-                    self.next_expected_seq += packet.len() as u32;
+                let got = self.reassembler.add_packet(packet, seq_num);
+                if got.is_some() {
+                    self.receive_queue.append_buffer(got.unwrap());
                 }
 
-                self.receive_queue.append_buffer(packet);
+                // Acknowledge packet
+                tcp_output(
+                    buf::NetBuffer::new(),
+                    self.local_port,
+                    self.remote_ip,
+                    self.remote_port,
+                    self.next_seq_num,
+                    self.reassembler.get_next_expect(),
+                    FLAG_ACK,
+                    WINDOW_SIZE,
+                );
+
                 RECV_WAIT.notify_all();
             }
             _ => {
@@ -188,6 +202,50 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16) -> Arc<Mutex<TCPSoc
     handle
 }
 
+impl TCPReassembler {
+    fn new() -> TCPReassembler {
+        TCPReassembler {
+            next_sequence: 0,
+            out_of_order: Vec::new(),
+        }
+    }
+
+    fn set_next_expect(&mut self, seq_num: u32) {
+        self.next_sequence = seq_num;
+    }
+
+    fn add_packet(&mut self, mut packet: buf::NetBuffer, seq_num: u32) -> Option<buf::NetBuffer> {
+        if seq_num == self.next_sequence {
+            self.next_sequence += packet.len() as u32;
+
+            // Check if any of the out-of-order packets can now be reassembled.
+            let mut i = 0;
+            while i < self.out_of_order.len() {
+                // XXX todo: if this packet is before the current one, remove it.
+                // This is a bit tricky because we need to do a wrapped compare.
+
+                if self.out_of_order[i].0 == self.next_sequence {
+                    let (_, ooo_packet) = self.out_of_order.remove(i);
+                    self.next_sequence += ooo_packet.len() as u32;
+                    packet.append_buffer(ooo_packet);
+                    i = 0;
+                } else {
+                    i += 1;
+                }
+            }
+
+            Some(packet)
+        } else {
+            self.out_of_order.push((seq_num, packet));
+            None
+        }
+    }
+
+    fn get_next_expect(&self) -> u32 {
+        self.next_sequence
+    }
+}
+
 pub fn tcp_recv(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
     let mut guard = socket.lock().unwrap();
     loop {
@@ -196,15 +254,12 @@ pub fn tcp_recv(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
         }
 
         if guard.receive_queue.len() > 0 {
-            println!("Returning data");
             let got = guard.receive_queue.copy_to_slice(data, usize::MAX);
             guard.receive_queue.trim_head(got);
             return got as i32;
         }
 
-        println!("Waiting for data");
         guard = RECV_WAIT.wait(guard).unwrap();
-        println!("Woke up");
     }
 }
 
@@ -221,7 +276,7 @@ pub fn tcp_send(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) {
         guard.remote_ip,
         guard.remote_port,
         guard.next_seq_num,
-        guard.next_expected_seq,
+        guard.reassembler.get_next_expect(),
         FLAG_ACK | FLAG_PSH,
         WINDOW_SIZE,
     );
@@ -253,20 +308,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     let seq_num = util::get_be32(&header[4..8]);
     let ack_num = util::get_be32(&header[8..12]);
     let header_size = ((header[12] >> 4) * 4) as usize;
-    let window = util::get_be16(&header[14..16]);
     let flags = header[13];
-
-    println!("source port {} dest port {}", source_port, dest_port);
-    println!("sequence {} ack {}", seq_num, ack_num);
-    println!("window {}", window);
-    println!(
-        "Flags {}{}{}{}{}",
-        if (flags & FLAG_ACK) != 0 { "A" } else { "-" },
-        if (flags & FLAG_PSH) != 0 { "P" } else { "-" },
-        if (flags & FLAG_RST) != 0 { "R" } else { "-" },
-        if (flags & FLAG_SYN) != 0 { "S" } else { "-" },
-        if (flags & FLAG_FIN) != 0 { "F" } else { "-" }
-    );
 
     packet.trim_head(header_size);
 
@@ -337,4 +379,57 @@ pub fn tcp_output(
     util::set_be16(&mut header[16..18], checksum);
 
     ipv4::ip_output(packet, ipv4::PROTO_TCP, dest_ip);
+}
+
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reassemble1() {
+        // Happy path: we get a packet, it is in order
+        let mut reassembler = TCPReassembler::new();
+        reassembler.set_next_expect(1234);
+        let mut packet = buf::NetBuffer::new();
+        packet.append_from_slice(b"hello");
+        let result = reassembler.add_packet(packet, 1234);
+        assert!(result.is_some());
+        let new_packet = result.as_ref().unwrap();
+        assert_eq!(reassembler.get_next_expect(), 1239);
+
+        assert_eq!(new_packet.len(), 5);
+        let mut data = [0u8; 5];
+        let got = new_packet.copy_to_slice(&mut data, 5);
+        assert_eq!(got, 5);
+    }
+
+    #[test]
+    fn test_reassemble2() {
+        // Two packets received out of order.
+        let mut reassembler = TCPReassembler::new();
+        reassembler.set_next_expect(1000);
+
+        let mut packet1 = buf::NetBuffer::new();
+        packet1.append_from_slice(&[1; 100]);
+
+        let mut packet2 = buf::NetBuffer::new();
+        packet2.append_from_slice(&[2; 100]);
+
+        let result = reassembler.add_packet(packet2, 1100);
+        assert!(result.is_none());
+        assert_eq!(reassembler.get_next_expect(), 1000);
+
+        let result = reassembler.add_packet(packet1, 1000);
+        assert!(result.is_some());
+        assert_eq!(reassembler.get_next_expect(), 1200);
+
+        let new_packet = result.as_ref().unwrap();
+        assert_eq!(new_packet.len(), 200);
+
+        let mut data = [0u8; 200];
+        new_packet.copy_to_slice(&mut data, 200);
+        assert!(data[0] == 1);
+        assert!(data[99] == 1);
+        assert!(data[100] == 2);
+        assert!(data[199] == 2);
+    }
 }

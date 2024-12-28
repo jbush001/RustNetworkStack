@@ -88,5 +88,6 @@ send UDP packets to it:
 
 Testing TCP connect, uncomment test_tcp_connect in main.rs. Before launching app:
 
-    python3 -m http.server 8765
+    python3 chargen_server.py
+
 

@@ -27,7 +27,6 @@ use std::io::Read;
 fn packet_receive_thread() {
     loop {
         let packet = netif::recv_packet();
-        println!("Received buf ({} bytes):", packet.len());
         ipv4::ip_input(packet);
     }
 }
@@ -56,7 +55,7 @@ fn test_tcp_connect() {
     // XXX Give a little time to start tcpdump
     // std::thread::sleep(std::time::Duration::from_secs(5));
 
-    let mut socket = tcpv4::tcp_open(0x0a000001, 8765);
+    let mut socket = tcpv4::tcp_open(0x0a000001, 3000);
     println!("Socket is open");
 
     const REQUEST_STRING: &str = "GET / HTTP/1.0\r\n\r\n";
@@ -66,9 +65,7 @@ fn test_tcp_connect() {
         let mut data = [0; 1500];
         let received = tcpv4::tcp_recv(&mut socket, &mut data);
         if received > 0 {
-            println!("Received {} bytes", received);
-            util::print_binary(&data[..received as usize]);
-            println!("{}", std::str::from_utf8(&data[..received as usize]).unwrap());
+            print!("{}", std::str::from_utf8(&data[..received as usize]).unwrap());
         }
     }
 }

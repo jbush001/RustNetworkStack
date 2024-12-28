@@ -102,11 +102,7 @@ pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
     let header = packet.header();
     let source_port = util::get_be16(&header[0..2]);
     let dest_port = util::get_be16(&header[2..4]);
-    let length = util::get_be16(&header[4..6]);
     packet.trim_head(UDP_HEADER_LEN);
-
-    println!("Source port {} dest port {}", source_port, dest_port);
-    println!("Length {}", length);
 
     let mut port_map_guard = PORT_MAP.lock().unwrap();
     let socket = port_map_guard.get_mut(&dest_port);
