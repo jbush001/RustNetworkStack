@@ -57,13 +57,13 @@ fn test_tcp_connect() {
     // XXX Give a little time to start tcpdump
     // std::thread::sleep(std::time::Duration::from_secs(5));
 
-    let mut handle = tcpv4::tcp_open(0x0a000001, 3000);
-    if handle.is_none() {
-        println!("Failed to open socket");
+    let result = tcpv4::tcp_open(0x0a000001, 3000);
+    if result.is_err() {
+        println!("Failed to open socket: {}", result.err().unwrap());
         return;
     }
 
-    let mut socket = handle.unwrap();
+    let mut socket = result.unwrap();
 
     println!("Socket is open");
 

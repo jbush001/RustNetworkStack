@@ -23,6 +23,8 @@ use std::collections::HashMap;
 use std::sync::Condvar;
 use std::sync::{Arc, Mutex};
 
+
+/// Each socket is uniquely identified by the tuple of remote_ip/remote_port/local_port
 type SocketKey = (util::IPv4Addr, u16, u16);
 const EPHEMERAL_PORT_BASE: u16 = 49152;
 const TCP_MTU: usize = 1500;
@@ -176,6 +178,7 @@ impl TCPSocket {
                 }
 
                 // Acknowledge packet
+                // TODO: this should use a timer to delay the ack so it's not spammy.
                 tcp_output(
                     buf::NetBuffer::new(),
                     self.local_port,
@@ -197,7 +200,7 @@ impl TCPSocket {
 }
 
 pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16)
-    -> Option<Arc<Mutex<TCPSocket>>>
+    -> Result<Arc<Mutex<TCPSocket>>, &'static str>
 {
     let local_port = unsafe { NEXT_EPHEMERAL_PORT };
     unsafe {
@@ -209,37 +212,38 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16)
         remote_port,
         local_port,
     )));
+
     PORT_MAP
         .lock()
         .unwrap()
         .insert((remote_ip, remote_port, local_port), handle.clone());
 
-    {
-        let mut guard = handle.lock().unwrap();
-        guard.state = TCPState::SynSent;
+    let mut guard = handle.lock().unwrap();
+    guard.state = TCPState::SynSent;
 
-        // XXX will not retry
-        tcp_output(
-            buf::NetBuffer::new(),
-            local_port,
-            remote_ip,
-            remote_port,
-            guard.next_transmit_seq,
-            0,
-            FLAG_SYN,
-            guard.get_receive_win_size(),
-        );
+    // TODO: Should set a timer to retry this if it isn't acknowledged.
+    tcp_output(
+        buf::NetBuffer::new(),
+        guard.local_port,
+        remote_ip,
+        remote_port,
+        guard.next_transmit_seq,
+        0,
+        FLAG_SYN,
+        guard.get_receive_win_size(),
+    );
 
-        // Wait until this is connected
-        while !matches!(guard.state ,TCPState::Established) {
-            guard = RECV_WAIT.wait(guard).unwrap();
-            if matches!(guard.state, TCPState::Closed) {
-                return None;
-            }
+    // Wait until this is connected
+    while !matches!(guard.state ,TCPState::Established) {
+        guard = RECV_WAIT.wait(guard).unwrap();
+        if matches!(guard.state, TCPState::Closed) {
+            return Err("Connection refused");
         }
     }
 
-    Some(handle)
+    std::mem::drop(guard);
+
+    Ok(handle)
 }
 
 impl TCPReassembler {
@@ -333,6 +337,8 @@ pub fn tcp_write(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) -> i32 {
         FLAG_ACK | FLAG_PSH,
         guard.get_receive_win_size(),
     );
+
+    // XXX Set the retransmit timer if it is not already pending.
 
     guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(data.len() as u32);
     guard.retransmit_queue.append_from_slice(data);
