@@ -50,6 +50,7 @@ fn test_udp_echo() {
 
         util::print_binary(&data[..received as usize]);
         udpv4::udp_send(&mut socket, source_addr, source_port, &data[..received as usize]);
+        buf::print_alloc_stats();
     }
 }
 
@@ -74,10 +75,19 @@ fn test_tcp_connect() {
         sleep(Duration::from_millis(100));
         let mut data = [0; 1500];
         let received = tcpv4::tcp_read(&mut socket, &mut data);
+        if received < 0 {
+            println!("Connection closed");
+            break;
+        }
         if received > 0 {
             print!("{}", std::str::from_utf8(&data[..received as usize]).unwrap());
         }
     }
+
+    buf::print_alloc_stats();
+    tcpv4::tcp_close(&mut socket);
+    std::mem::drop(socket);
+    buf::print_alloc_stats();
 }
 
 fn main() {

@@ -92,4 +92,6 @@ Testing TCP connect, uncomment test_tcp_connect in main.rs. Before launching app
 
     python3 chargen_server.py
 
-
+(Running for a while, then hitting ctrl-C in the terminal hosting the chargen_server
+will cause the socket to close on the network stack side, and it will dump memory
+usage statistics)

@@ -15,39 +15,30 @@
 //
 
 ///
-/// This class implements a flexible container for unstructured data, which
-/// is used as temporary storage for data throughout the network stack,
+/// This class implements an efficient, flexible container for unstructured
+/// data, which is used as temporary storage throughout the network stack,
 /// including packets and queued receive and transmit data. The design is
 /// similar to mbufs in the BSD network stack or skbuff in Linux, although
-/// this is implemented to work better specifically with Rust's ownership
-/// model.
+/// this is implemented more idiomatically with Rust's ownership model.
 ///
 /// The design goals of any network buffering system are to minimize copies,
-/// avoid  external heap fragmentation, and optimize allocation speed. The
-/// base storage unit ia a fixed-size BufferFragment. In most implementations,
-/// this is allocated from a pool, although that is tricky to do in Rust so
-/// I haven't done that yet. These fragments are chained together to allow
-/// buffers to grow to arbitrary sizes.
+/// avoid external heap fragmentation, and optimize allocation speed. The
+/// base storage unit is a fixed-size BufferFragment. These fragments are
+/// chained together to allow buffers to grow to arbitrary sizes. Fragments
+/// are allocated from a fixed pool of memory, which is fast.
 ///
 /// Alternatives:
 /// - I also considered having NetBuffer contain an array of pointers
-///   to fragments, which would be more idiomatic for Rust and potentially more
-///   cache friendly, but would limit the maximum size of buffer (potentially
-///   workable for many protocols).
+///   to fragments, which would be simpler and potentially more cache friendly,
+///   but would limit the maximum size of buffer (potentially workable for
+///   many protocols).
 ///
 
 use std::cmp;
+use std::sync::Mutex;
 
-const FRAG_SIZE: usize = 512;
-
+const FRAGMENT_SIZE: usize = 512;
 type FragPointer = Option<Box<BufferFragment>>;
-
-struct BufferFragment {
-    data: [u8; FRAG_SIZE],
-    data_start: usize, // Offset into data array of first valid byte of data.
-    data_end: usize,   // Same for last. This is exclusive (one past last byte)
-    next: FragPointer, // Next fragment in linked list.
-}
 
 // This is the publicly visible abstraction for clients of this API.
 pub struct NetBuffer {
@@ -63,15 +54,79 @@ pub struct NetBuffer {
     // ownership model.
 }
 
+/// Portion of a buffer, which represents a node in a linked list.
+struct BufferFragment {
+    data: [u8; FRAGMENT_SIZE],
+    data_start: usize, // Offset into data array of first valid byte of data.
+    data_end: usize,   // Same for last. This is exclusive (one past last byte)
+    next: FragPointer, // Next fragment in linked list.
+}
+
 pub struct BufferIterator<'a> {
     current_frag: &'a FragPointer,
     remaining: usize, // How many more bytes to copy.
 }
 
+const GROW_SIZE: usize = 16;
+static g_free_list: Mutex<FragPointer> = Mutex::new(FragPointer::None);
+static mut g_pool_size: usize = 0;
+static mut g_free_bufs: usize = 0;
+static mut g_total_allocs: u64 = 0;
+
+fn alloc_fragment() -> Box<BufferFragment> {
+    let mut free_list = g_free_list.lock().unwrap();
+    if free_list.is_none() {
+        // Grow the pool.
+        for _ in 0..GROW_SIZE {
+            let mut frag = Box::new(BufferFragment::new());
+            frag.next = free_list.take();
+            *free_list = Some(frag);
+        }
+
+        unsafe {
+            g_pool_size += GROW_SIZE;
+            g_free_bufs += GROW_SIZE;
+        }
+    }
+
+    unsafe {
+        assert!(g_free_bufs > 0);
+        g_total_allocs += 1;
+        g_free_bufs -= 1;
+    }
+
+    let mut new_frag = free_list.take().unwrap();
+    new_frag.data_start = 0;
+    new_frag.data_end = 0;
+    new_frag.next = None;
+
+    new_frag
+}
+
+/// Put a fragment back into the pool.
+/// It's still necessary to explicitly return these (vs having them
+/// automatically return when they go out of scope). The Box class does
+/// have an allocator parameter, but it is marked as unstable and not fully
+/// supported.
+fn free_fragment(mut fragment: Box<BufferFragment>) {
+    let mut free_list = g_free_list.lock().unwrap();
+    unsafe { g_free_bufs += 1; }
+    fragment.next = free_list.take();
+    *free_list = Some(fragment);
+}
+
+pub fn print_alloc_stats() {
+    unsafe {
+        println!("Total pool size: {} ({}k)", g_pool_size, g_pool_size * FRAGMENT_SIZE / 1024);
+        println!("Free buffers: {} ({}k)", g_free_bufs, g_free_bufs * FRAGMENT_SIZE / 1024);
+        println!("Total allocations: {}", g_total_allocs);
+    }
+}
+
 impl BufferFragment {
     pub fn new() -> BufferFragment {
         BufferFragment {
-            data: [0; FRAG_SIZE],
+            data: [0; FRAGMENT_SIZE],
             data_start: 0,
             data_end: 0,
             next: None,
@@ -80,6 +135,17 @@ impl BufferFragment {
 
     pub fn len(&self) -> usize {
         self.data_end - self.data_start
+    }
+}
+
+impl Drop for NetBuffer {
+    fn drop(&mut self) {
+        let mut frag = self.fragments.take();
+        while frag.is_some() {
+            let next = frag.as_mut().unwrap().next.take();
+            free_fragment(frag.unwrap());
+            frag = next;
+        }
     }
 }
 
@@ -98,7 +164,6 @@ impl NetBuffer {
 
     /// Return an iterator that will walk through the fragments in the buffer and
     /// return a slice for each.
-    /// If offset is past the end of the buffer, the iterator will return None
     pub fn iter(&self, length: usize) -> BufferIterator {
         BufferIterator {
             current_frag: &self.fragments,
@@ -132,13 +197,13 @@ impl NetBuffer {
     /// span multiple fragments). The contents of the allocated space will be
     /// zeroed out.
     pub fn alloc_header(&mut self, size: usize) {
-        assert!(size <= FRAG_SIZE);
+        assert!(size <= FRAGMENT_SIZE);
         if self.fragments.is_none() || self.fragments.as_ref().unwrap().data_start < size {
             // Prepend a new frag. We place the data at the end of the frag
             // to allow space for subsequent headers to be added.
-            let mut new_head_frag = Box::new(BufferFragment::new());
-            new_head_frag.data_start = FRAG_SIZE - size;
-            new_head_frag.data_end = FRAG_SIZE;
+            let mut new_head_frag = alloc_fragment();
+            new_head_frag.data_start = FRAGMENT_SIZE - size;
+            new_head_frag.data_end = FRAGMENT_SIZE;
             new_head_frag.next = if self.fragments.is_none() {
                 None
             } else {
@@ -153,9 +218,7 @@ impl NetBuffer {
             frag.data_start -= size;
 
             // Zero out contents
-            for i in 0..size {
-                frag.data[frag.data_start + i] = 0;
-            }
+            frag.data[frag.data_start..frag.data_start + size].fill(0);
         }
 
         self.length += size;
@@ -175,7 +238,9 @@ impl NetBuffer {
             }
 
             remaining -= frag_len;
-            self.fragments = self.fragments.as_mut().unwrap().next.take();
+            let mut dead_frag = self.fragments.take().unwrap();
+            self.fragments = dead_frag.next.take();
+            free_fragment(dead_frag);
         }
 
         // Truncate the front buffer
@@ -196,7 +261,7 @@ impl NetBuffer {
 
         // Find the last frag (or, if the buffer is empty, create a new one)
         let mut last_frag = if self.fragments.is_none() {
-            self.fragments = Some(Box::new(BufferFragment::new()));
+            self.fragments = Some(alloc_fragment());
             &mut self.fragments
         } else {
             let mut frag = &mut self.fragments;
@@ -210,13 +275,13 @@ impl NetBuffer {
         let mut data_offset = 0;
         while data_offset < data.len() {
             let frag = last_frag.as_mut().unwrap();
-            let copy_len = cmp::min(FRAG_SIZE - frag.data_end, data.len() - data_offset);
+            let copy_len = cmp::min(FRAGMENT_SIZE - frag.data_end, data.len() - data_offset);
             frag.data[frag.data_end..frag.data_end + copy_len]
                 .copy_from_slice(&data[data_offset..data_offset + copy_len]);
             frag.data_end += copy_len;
             data_offset += copy_len;
             if data_offset < data.len() {
-                let new_frag = Some(Box::new(BufferFragment::new()));
+                let new_frag = Some(alloc_fragment());
                 last_frag.as_mut().unwrap().next = new_frag;
                 last_frag = &mut last_frag.as_mut().unwrap().next;
             }
@@ -261,17 +326,17 @@ impl NetBuffer {
     /// This just takes over data from another buffer, tacking it onto the
     /// end. Rust's move semantics kind of shine here, because this
     /// takes over the storage with no copies.
-    pub fn append_buffer(&mut self, other: NetBuffer) {
+    pub fn append_buffer(&mut self, mut other: NetBuffer) {
         self.length += other.length;
         if self.fragments.is_none() {
-            self.fragments = other.fragments;
+            self.fragments = other.fragments.take();
         } else {
             let mut last_frag = self.fragments.as_mut().unwrap();
             while last_frag.next.is_some() {
                 last_frag = last_frag.next.as_mut().unwrap();
             }
 
-            last_frag.next = other.fragments;
+            last_frag.next = other.fragments.take();
         }
     }
 }
@@ -297,6 +362,10 @@ impl<'a> Iterator for BufferIterator<'a> {
 }
 
 mod tests {
+    fn no_leaks() -> bool {
+        unsafe { super::g_free_bufs == super::g_pool_size }
+    }
+
     #[test]
     fn test_append_from_slice() {
         let mut buf = super::NetBuffer::new();
@@ -315,6 +384,9 @@ mod tests {
         let mut dest = [0; 15];
         buf.copy_to_slice(&mut dest);
         assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 
 
@@ -329,6 +401,9 @@ mod tests {
         assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 0, 0]);
         assert_eq!(copied, 15);
         assert_eq!(buf.len(), 15);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 
     #[test]
@@ -341,6 +416,9 @@ mod tests {
         let copied = buf.copy_to_slice(&mut dest);
         assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         assert_eq!(copied, 10);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 
     #[test]
@@ -349,6 +427,9 @@ mod tests {
         let mut dest = [0; 10];
         let copied = buf.copy_to_slice(&mut dest);
         assert_eq!(copied, 0);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 
     #[test]
@@ -361,16 +442,19 @@ mod tests {
         assert_eq!(buf.len(), 500);
 
         // Add another frag. This will first fill the remainder of the
-        // last frag, then add a new one.
-        let slice2 = [2; 500];
-        buf.append_from_slice(&[2; 500]);
-        assert_eq!(buf.len(), 1000);
+        // last frag, then add several new ones.
+        let slice2 = [2; 1500];
+        buf.append_from_slice(&[2; 1500]);
+        assert_eq!(buf.len(), 2000);
 
         // Check the contents
-        let mut dest = [0; 1000];
+        let mut dest = [0; 2000];
         buf.copy_to_slice(&mut dest);
         assert_eq!(dest[..500], slice1);
         assert_eq!(dest[500..], slice2);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 
     #[test]
@@ -400,6 +484,9 @@ mod tests {
         assert_eq!(header[19], 4);
         assert_eq!(header[20], 1);
         assert_eq!(header[39], 2);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 
 
@@ -423,6 +510,9 @@ mod tests {
         for i in 0..492 {
             assert_eq!(dest[i], (i + 20) as u8);
         }
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 
     #[test]
@@ -447,6 +537,9 @@ mod tests {
         assert_eq!(slice3[0], 3);
         assert_eq!(slice3[475], 3);
         assert!(iter.next().is_none());
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 
     #[test]
@@ -457,14 +550,19 @@ mod tests {
         // Zero length
         let mut iter = buf.iter(0);
         assert!(iter.next().is_none());
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 
     #[test]
-    fn test_iter4() {
+    fn test_iter3() {
         // Create iterator on empty buffer
         let buf = super::NetBuffer::new();
         let mut iter = buf.iter(usize::MAX);
         assert!(iter.next().is_none());
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 
     #[test]
@@ -491,6 +589,10 @@ mod tests {
         assert_eq!(dest[512..1024], [2; 512]);
         assert_eq!(dest[1024..1536], [3; 512]);
         assert_eq!(buf1.len(), 3072);
+
+        std::mem::drop(buf1);
+        assert!(no_leaks());
+
     }
 
     #[test]
@@ -518,6 +620,10 @@ mod tests {
         assert_eq!(dest[2048..2536], [5; 488]);
 
         assert_eq!(buf1.len(), 2536);
+
+        std::mem::drop(buf1);
+        std::mem::drop(buf2);
+        assert!(no_leaks());
     }
 
     #[test]
@@ -563,6 +669,9 @@ mod tests {
         let header = buf.header();
         assert_eq!(header[0], 40);
         assert_eq!(header[5], 45);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 
     #[test]
@@ -581,6 +690,9 @@ mod tests {
         let header = buf.header();
         assert_eq!(header[0], 20);
         assert_eq!(header[5], 25);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 
     #[test]
@@ -597,6 +709,9 @@ mod tests {
         assert_eq!(buf.len(), 532);
         buf.trim_head(10); // This will remove part of the header
         assert_eq!(buf.len(), 522);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 
     #[test]
@@ -636,6 +751,9 @@ mod tests {
 
         receive_queue.trim_head(452);
         assert_eq!(receive_queue.len(), 0);
+
+        std::mem::drop(receive_queue);
+        assert!(no_leaks());
     }
 
     #[test]
@@ -676,5 +794,8 @@ mod tests {
         assert_eq!(out_data[67], 7);
         assert_eq!(out_data[570], 254);
         assert_eq!(out_data[571], 255);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
     }
 }

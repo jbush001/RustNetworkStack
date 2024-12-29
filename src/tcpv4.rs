@@ -246,6 +246,18 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16)
     Ok(handle)
 }
 
+pub fn tcp_close(socket: &mut Arc<Mutex<TCPSocket>>) {
+    let mut guard = socket.lock().unwrap();
+    guard.state = TCPState::Closed;
+    RECV_WAIT.notify_all();
+
+    // XXX normally should send FIN and move through close process,
+    // but for now will free up memory
+    let mut port_map_guard = PORT_MAP.lock().unwrap();
+    port_map_guard.remove(&(guard.remote_ip, guard.remote_port, guard.local_port));
+}
+
+
 impl TCPReassembler {
     fn new() -> TCPReassembler {
         TCPReassembler {
@@ -317,12 +329,6 @@ pub fn tcp_write(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) -> i32 {
 
     if matches!(guard.state, TCPState::Closed) {
         return -1;
-    }
-
-    if util::seq_gt(guard.next_transmit_seq.wrapping_add(data.len() as u32),
-        guard.transmit_window_max) {
-        // XXX Window is full, can't write. Need to block.
-        return 0;
     }
 
     let mut packet = buf::NetBuffer::new();
