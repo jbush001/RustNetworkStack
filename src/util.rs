@@ -46,7 +46,7 @@ pub fn compute_checksum(slice: &[u8]) -> u16 {
 
 pub fn compute_buffer_ones_comp(initial_sum: u16, buffer: &buf::NetBuffer) -> u16 {
     let mut sum = initial_sum;
-    for frag in buffer.iter(0, usize::MAX) {
+    for frag in buffer.iter(usize::MAX) {
         sum = compute_ones_comp(sum, frag);
     }
 

@@ -301,7 +301,7 @@ pub fn tcp_read(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
         }
 
         if guard.receive_queue.len() > 0 {
-            let got = guard.receive_queue.copy_to_slice(data, usize::MAX);
+            let got = guard.receive_queue.copy_to_slice(data);
             guard.receive_queue.trim_head(got);
             return got as i32;
         }
@@ -460,7 +460,7 @@ mod tests {
 
         assert_eq!(new_packet.len(), 5);
         let mut data = [0u8; 5];
-        let got = new_packet.copy_to_slice(&mut data, 5);
+        let got = new_packet.copy_to_slice(&mut data);
         assert_eq!(got, 5);
     }
 
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(new_packet.len(), 200);
 
         let mut data = [0u8; 200];
-        new_packet.copy_to_slice(&mut data, 200);
+        new_packet.copy_to_slice(&mut data);
         assert!(data[0] == 1);
         assert!(data[99] == 1);
         assert!(data[100] == 2);
@@ -546,7 +546,7 @@ mod tests {
         let new_packet = result.as_ref().unwrap();
         assert_eq!(new_packet.len(), 100);
         let mut data = [0u8; 100];
-        new_packet.copy_to_slice(&mut data, 100);
+        new_packet.copy_to_slice(&mut data);
         assert!(data[0] == 3);
         assert!(data[99] == 3);
 
@@ -575,7 +575,7 @@ mod tests {
         let new_packet = result.as_ref().unwrap();
         assert_eq!(new_packet.len(), 0x200);
         let mut data = [0u8; 0x200];
-        new_packet.copy_to_slice(&mut data, 0x200);
+        new_packet.copy_to_slice(&mut data);
         assert!(data[0] == 2);
         assert!(data[199] == 2);
 
@@ -634,7 +634,7 @@ mod tests {
         assert_eq!(new_packet.len(), 300);
 
         let mut data = [0u8; 300];
-        new_packet.copy_to_slice(&mut data, 300);
+        new_packet.copy_to_slice(&mut data);
         assert!(data[0] == 1);
         assert!(data[99] == 1);
         assert!(data[100] == 2);
@@ -668,7 +668,7 @@ mod tests {
         assert_eq!(new_packet.len(), 150);
 
         let mut data = [0u8; 150];
-        new_packet.copy_to_slice(&mut data, 150);
+        new_packet.copy_to_slice(&mut data);
         assert!(data[0] == 3);
         assert!(data[99] == 3);
         assert!(data[100] == 3);
@@ -708,7 +708,7 @@ mod tests {
         assert_eq!(new_packet.len(), 250);
 
         let mut data = [0u8; 250];
-        new_packet.copy_to_slice(&mut data, 250);
+        new_packet.copy_to_slice(&mut data);
         assert!(data[0] == 1);
         assert!(data[99] == 1);
         assert!(data[100] == 2);

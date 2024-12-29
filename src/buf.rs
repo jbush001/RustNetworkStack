@@ -15,17 +15,19 @@
 //
 
 ///
-/// This class implements a flexible and performant container for unstructured
-/// data. It is used as temporary storage for data throughout the network stack,
+/// This class implements a flexible container for unstructured data, which
+/// is used as temporary storage for data throughout the network stack,
 /// including packets and queued receive and transmit data. The design is
-/// similar to mbufs in the BSD network stack or skbuff in Linux, although this is
-/// implemented to work better specifically with Rust's ownership model.
+/// similar to mbufs in the BSD network stack or skbuff in Linux, although
+/// this is implemented to work better specifically with Rust's ownership
+/// model.
 ///
-/// The intent of this implementation is to minimize copies, avoid external heap
-/// fragmentation, and optimize allocation speed. The base storage unit ia a
-/// fixed-size BufferFragment, which would ideally be allocated from a pool
-/// (although this implementation does not do that yet). These fragments are
-/// chained together to allow buffers to grow arbitrarily.
+/// The design goals of any network buffering system are to minimize copies,
+/// avoid  external heap fragmentation, and optimize allocation speed. The
+/// base storage unit ia a fixed-size BufferFragment. In most implementations,
+/// this is allocated from a pool, although that is tricky to do in Rust so
+/// I haven't done that yet. These fragments are chained together to allow
+/// buffers to grow to arbitrary sizes.
 ///
 /// Alternatives:
 /// - I also considered having NetBuffer contain an array of pointers
@@ -42,14 +44,18 @@ type FragPointer = Option<Box<BufferFragment>>;
 
 struct BufferFragment {
     data: [u8; FRAG_SIZE],
-    data_start: usize,
-    data_end: usize, // This is exclusive (past last byte of data)
-    next: FragPointer,
+    data_start: usize, // Offset into data array of first valid byte of data.
+    data_end: usize,   // Same for last. This is exclusive (one past last byte)
+    next: FragPointer, // Next fragment in linked list.
 }
 
 // This is the publicly visible abstraction for clients of this API.
 pub struct NetBuffer {
-    fragments: FragPointer,
+    fragments: FragPointer, // Head of linked list of fragments
+
+    // This is always equal the sum of the lengths of fragments.
+    // (data_end - data_start for each). I maintain this separately to
+    // speed up calls to get the length.
     length: usize,
 
     // XXX ideally this would also have a pointer to the tail frag, to avoid
@@ -59,8 +65,7 @@ pub struct NetBuffer {
 
 pub struct BufferIterator<'a> {
     current_frag: &'a FragPointer,
-    skip: usize,
-    remaining: usize,
+    remaining: usize, // How many more bytes to copy.
 }
 
 impl BufferFragment {
@@ -94,20 +99,9 @@ impl NetBuffer {
     /// Return an iterator that will walk through the fragments in the buffer and
     /// return a slice for each.
     /// If offset is past the end of the buffer, the iterator will return None
-    pub fn iter(&self, offset: usize, length: usize) -> BufferIterator {
-        // Skip entire fragments if needed. This is necessary for correct
-        // operation, as the iterator next() method relies on the first
-        // fragment having something to copy.
-        let mut current_frag = &self.fragments;
-        let mut skip = offset;
-        while current_frag.is_some() && offset >= current_frag.as_ref().unwrap().len() {
-            skip -= current_frag.as_ref().unwrap().len();
-            current_frag = &current_frag.as_ref().unwrap().next;
-        }
-
+    pub fn iter(&self, length: usize) -> BufferIterator {
         BufferIterator {
-            current_frag: current_frag,
-            skip: skip,
+            current_frag: &self.fragments,
             remaining: length,
         }
     }
@@ -233,26 +227,24 @@ impl NetBuffer {
 
     /// Copy data out of the buffer into a slice, leaving the NetBuffer
     /// unmodified.
-    pub fn copy_to_slice(&self, dest: &mut [u8], length: usize) -> usize {
+    pub fn copy_to_slice(&self, dest: &mut [u8]) -> usize {
         let mut copied = 0;
-        let mut iter = self.iter(0, length);
-        let to_copy = cmp::min(length, dest.len());
-        while copied < to_copy {
+        let mut iter = self.iter(usize::MAX);
+        while copied < dest.len() {
             let next = iter.next();
             if next.is_none() {
                 break;
             }
 
             let slice = next.unwrap();
-            let copy_len = cmp::min(slice.len(), to_copy - copied);
+            let copy_len = cmp::min(slice.len(), dest.len() - copied);
             dest[copied..copied + copy_len].copy_from_slice(&slice[..copy_len]);
             copied += copy_len;
         }
 
-        assert!(copied <= length);
         assert!(copied <= self.length);
         assert!(copied <= dest.len());
-        assert!(copied == length || copied == self.length || copied == dest.len());
+        assert!(copied == self.length || copied == dest.len());
         assert!(copied != self.len() || iter.next().is_none());
 
         return copied;
@@ -261,7 +253,7 @@ impl NetBuffer {
     /// Copy data out of another buffer into this one, leaving the original
     /// unmodified.
     pub fn append_from_buffer(&mut self, other: &NetBuffer, length: usize) {
-        for frag in other.iter(0, length) {
+        for frag in other.iter(length) {
             self.append_from_slice(frag);
         }
     }
@@ -292,15 +284,11 @@ impl<'a> Iterator for BufferIterator<'a> {
             return None;
         }
 
-        // Note: We must guarantee is something in current_frag to be copied
-        // The setup code iterates over fragments that are entirely skipped.
         let frag = self.current_frag.as_ref().unwrap();
-        let slice_length = cmp::min(frag.len() - self.skip, self.remaining);
-        assert!(slice_length >= self.skip);
+        let slice_length = cmp::min(frag.len(), self.remaining);
         assert!(self.remaining >= slice_length);
-        let start_offs = frag.data_start + self.skip;
+        let start_offs = frag.data_start;
         let slice = &frag.data[start_offs..start_offs + slice_length];
-        self.skip = 0;
         self.remaining -= slice_length;
         self.current_frag = &frag.next;
 
@@ -325,22 +313,22 @@ mod tests {
 
         // Check contents
         let mut dest = [0; 15];
-        buf.copy_to_slice(&mut dest, 15);
+        buf.copy_to_slice(&mut dest);
         assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
     }
+
 
     #[test]
     fn test_copy_to_slice1() {
         let mut buf = super::NetBuffer::new();
         buf.append_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 
-        // Try to copy fewer bytes than in the destination. Ensure it
-        // doesn't overrun
-        let mut dest = [0; 15];
-        let copied = buf.copy_to_slice(&mut dest, 12);
-        assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0, 0, 0]);
+        // Destination slice is larger than buffer
+        let mut dest = [0; 20];
+        let copied = buf.copy_to_slice(&mut dest);
+        assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 0, 0]);
+        assert_eq!(copied, 15);
         assert_eq!(buf.len(), 15);
-        assert_eq!(copied, 12);
     }
 
     #[test]
@@ -348,23 +336,9 @@ mod tests {
         let mut buf = super::NetBuffer::new();
         buf.append_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 
-        // Try to copy more bytes than are in the buffer. Ensure it
-        // returns a lesser count.
-        let mut dest = [0; 15];
-        let copied = buf.copy_to_slice(&mut dest, 20);
-        assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-        assert_eq!(copied, 15);
-        assert_eq!(buf.len(), 15);
-    }
-
-    #[test]
-    fn test_copy_to_slice3() {
-        let mut buf = super::NetBuffer::new();
-        buf.append_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-
-        // Try to copy more bytes than are in the destination.
+        // Destination slice is smaller than buffer
         let mut dest = [0; 10];
-        let copied = buf.copy_to_slice(&mut dest, 20);
+        let copied = buf.copy_to_slice(&mut dest);
         assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         assert_eq!(copied, 10);
     }
@@ -373,7 +347,7 @@ mod tests {
     fn test_copy_empty_buffer_to_slice() {
         let buf = super::NetBuffer::new();
         let mut dest = [0; 10];
-        let copied = buf.copy_to_slice(&mut dest, 10);
+        let copied = buf.copy_to_slice(&mut dest);
         assert_eq!(copied, 0);
     }
 
@@ -394,7 +368,7 @@ mod tests {
 
         // Check the contents
         let mut dest = [0; 1000];
-        buf.copy_to_slice(&mut dest, 1000);
+        buf.copy_to_slice(&mut dest);
         assert_eq!(dest[..500], slice1);
         assert_eq!(dest[500..], slice2);
     }
@@ -445,7 +419,7 @@ mod tests {
 
         // Check the contents
         let mut dest = [0; 512];
-        buf.copy_to_slice(&mut dest, 512);
+        buf.copy_to_slice(&mut dest);
         for i in 0..492 {
             assert_eq!(dest[i], (i + 20) as u8);
         }
@@ -458,20 +432,20 @@ mod tests {
         buf.append_from_slice(&[2; 512]);
         buf.append_from_slice(&[3; 512]);
 
-        // This range will chop both the first and last frag
-        let mut iter = buf.iter(20, 1200);
+        // This range will chop the last frag
+        let mut iter = buf.iter(1500);
         let slice1 = iter.next().unwrap();
-        assert_eq!(slice1.len(), 492);
+        assert_eq!(slice1.len(), 512);
         assert_eq!(slice1[0], 1);
-        assert_eq!(slice1[491], 1);
+        assert_eq!(slice1[511], 1);
         let slice2 = iter.next().unwrap();
         assert_eq!(slice2.len(), 512);
         assert_eq!(slice2[0], 2);
         assert_eq!(slice2[511], 2);
         let slice3 = iter.next().unwrap();
-        assert_eq!(slice3.len(), 196); // Not short buf
+        assert_eq!(slice3.len(), 476);
         assert_eq!(slice3[0], 3);
-        assert_eq!(slice3[195], 3);
+        assert_eq!(slice3[475], 3);
         assert!(iter.next().is_none());
     }
 
@@ -481,17 +455,7 @@ mod tests {
         buf.append_from_slice(&[1; 512]);
 
         // Zero length
-        let mut iter = buf.iter(0, 0);
-        assert!(iter.next().is_none());
-    }
-
-    #[test]
-    fn test_iter3() {
-        let mut buf = super::NetBuffer::new();
-        buf.append_from_slice(&[1; 512]);
-
-        // Offset past end of buffer
-        let mut iter = buf.iter(513, 0);
+        let mut iter = buf.iter(0);
         assert!(iter.next().is_none());
     }
 
@@ -499,7 +463,7 @@ mod tests {
     fn test_iter4() {
         // Create iterator on empty buffer
         let buf = super::NetBuffer::new();
-        let mut iter = buf.iter(0, usize::MAX);
+        let mut iter = buf.iter(usize::MAX);
         assert!(iter.next().is_none());
     }
 
@@ -522,7 +486,7 @@ mod tests {
 
         // Check contents
         let mut dest = [0; 1536];
-        buf1.copy_to_slice(&mut dest, 1536);
+        buf1.copy_to_slice(&mut dest);
         assert_eq!(dest[0..512], [1; 512]);
         assert_eq!(dest[512..1024], [2; 512]);
         assert_eq!(dest[1024..1536], [3; 512]);
@@ -546,7 +510,7 @@ mod tests {
 
         // Check contents
         let mut dest = [0; 3000];
-        buf1.copy_to_slice(&mut dest, 3000);
+        buf1.copy_to_slice(&mut dest);
         assert_eq!(dest[0..512], [1; 512]);
         assert_eq!(dest[512..1024], [2; 512]);
         assert_eq!(dest[1024..1536], [3; 512]);
@@ -578,7 +542,7 @@ mod tests {
 
         // copy out slices
         let mut dest = [0; 512];
-        buf.copy_to_slice(&mut dest, 512);
+        buf.copy_to_slice(&mut dest);
         assert_eq!(dest[0], 0xcc);
         assert_eq!(dest[19], 0x55);
         assert_eq!(dest[20], 1);
@@ -665,7 +629,7 @@ mod tests {
 
         // Read
         let mut dest = [0; 452];
-        receive_queue.copy_to_slice(&mut dest, 452);
+        receive_queue.copy_to_slice(&mut dest);
         for i in 0..452 {
             assert_eq!(dest[i], (i + 60) as u8);
         }
@@ -703,7 +667,7 @@ mod tests {
 
         // Transmit
         let mut out_data = [0; 572];
-        buf.copy_to_slice(&mut out_data, 572);
+        buf.copy_to_slice(&mut out_data);
         assert_eq!(out_data[0], 103);
         assert_eq!(out_data[19], 104);
         assert_eq!(out_data[20], 100);

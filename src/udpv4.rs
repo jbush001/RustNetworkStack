@@ -68,7 +68,7 @@ pub fn udp_recv(
             *out_port = source_port;
             let len = buf.len();
             let copy_len = std::cmp::min(len, data.len());
-            buf.copy_to_slice(&mut data[0..copy_len], copy_len);
+            buf.copy_to_slice(&mut data[0..copy_len]);
             return copy_len as i32;
         }
 
