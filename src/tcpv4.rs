@@ -30,6 +30,8 @@ type SocketKey = (util::IPv4Addr, u16, u16);
 const EPHEMERAL_PORT_BASE: u16 = 49152;
 const TCP_MTU: usize = 1500;
 const RETRANSMIT_INTERVAL: u32 = 1000; // HACK: this should back off
+const MAX_ACK_DELAY: u32 = 500; // ms
+const MAX_DELAYED_ACKS: u32 = 5;
 
 const MAX_RECEIVE_WINDOW: u16 = 0xffff;
 
@@ -54,6 +56,8 @@ pub struct TCPSocket {
     // Receive
     receive_queue: buf::NetBuffer,
     reassembler: TCPReassembler,
+    delayed_ack_timer_id: i32,
+    num_delayed_acks: u32,
 
     // Transmit
     next_transmit_seq: u32,
@@ -78,38 +82,6 @@ lazy_static! {
 
 // XXX this is not protected with a lock.
 static mut NEXT_EPHEMERAL_PORT: u16 = EPHEMERAL_PORT_BASE;
-
-impl TCPSocket {
-    fn new(remote_ip: util::IPv4Addr, remote_port: u16, local_port: u16) -> TCPSocket {
-        TCPSocket {
-            remote_ip: remote_ip,
-            remote_port: remote_port,
-            local_port: local_port,
-            next_transmit_seq: 1, // XXX this should be randomized
-            transmit_window_max: 0,
-            state: TCPState::Closed,
-            receive_queue: buf::NetBuffer::new(),
-            reassembler: TCPReassembler::new(),
-            retransmit_queue: buf::NetBuffer::new(),
-            retransmit_timer_id: -1,
-        }
-    }
-
-    fn send_packet(&mut self, packet: buf::NetBuffer, flags: u8) {
-        let receive_window = MAX_RECEIVE_WINDOW - self.receive_queue.len() as u16;
-
-        tcp_output(
-            packet,
-            self.local_port,
-            self.remote_ip,
-            self.remote_port,
-            self.next_transmit_seq,
-            self.reassembler.get_next_expect(),
-            flags,
-            receive_window,
-        );
-    }
-}
 
 pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16)
     -> Result<Arc<Mutex<TCPSocket>>, &'static str>
@@ -158,54 +130,6 @@ pub fn tcp_close(socket: &mut Arc<Mutex<TCPSocket>>) {
     // but for now will free up memory
     let mut port_map_guard = PORT_MAP.lock().unwrap();
     port_map_guard.remove(&(guard.remote_ip, guard.remote_port, guard.local_port));
-}
-
-
-impl TCPReassembler {
-    fn new() -> TCPReassembler {
-        TCPReassembler {
-            next_sequence: 0,
-            out_of_order: Vec::new(),
-        }
-    }
-
-    fn set_next_expect(&mut self, seq_num: u32) {
-        self.next_sequence = seq_num;
-    }
-
-    fn add_packet(&mut self, mut packet: buf::NetBuffer, seq_num: u32) -> Option<buf::NetBuffer> {
-        if seq_num == self.next_sequence {
-            self.next_sequence = self.next_sequence.wrapping_add(packet.len() as u32);
-
-            // Check if any of the out-of-order packets can now be reassembled.
-            let mut i = 0;
-            while i < self.out_of_order.len() {
-                if util::seq_gt(seq_num, self.out_of_order[i].0) {
-                    // Remove packets before window.
-                    self.out_of_order.remove(i);
-                } else if self.out_of_order[i].0 == self.next_sequence {
-                    let (_, ooo_packet) = self.out_of_order.remove(i);
-                    self.next_sequence = self.next_sequence.wrapping_add(ooo_packet.len() as u32);
-                    packet.append_buffer(ooo_packet);
-                    i = 0;
-                } else {
-                    i += 1;
-                }
-            }
-
-            Some(packet)
-        } else {
-            // Note that this doesn't bother to order these or anything. I assume
-            // this case is infrequent enough that any optimization would be
-            // lost in the noise.
-            self.out_of_order.push((seq_num, packet));
-            None
-        }
-    }
-
-    fn get_next_expect(&self) -> u32 {
-        self.next_sequence
-    }
 }
 
 pub fn tcp_read(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
@@ -274,6 +198,89 @@ fn retransmit(data: timer::TimerData) {
     }
 }
 
+impl TCPSocket {
+    fn new(remote_ip: util::IPv4Addr, remote_port: u16, local_port: u16) -> TCPSocket {
+        TCPSocket {
+            remote_ip: remote_ip,
+            remote_port: remote_port,
+            local_port: local_port,
+            next_transmit_seq: 1, // XXX this should be randomized
+            transmit_window_max: 0,
+            state: TCPState::Closed,
+            receive_queue: buf::NetBuffer::new(),
+            reassembler: TCPReassembler::new(),
+            delayed_ack_timer_id: -1,
+            num_delayed_acks: 0,
+            retransmit_queue: buf::NetBuffer::new(),
+            retransmit_timer_id: -1,
+        }
+    }
+
+    fn send_packet(&mut self, packet: buf::NetBuffer, flags: u8) {
+        let receive_window = MAX_RECEIVE_WINDOW - self.receive_queue.len() as u16;
+
+        tcp_output(
+            packet,
+            self.local_port,
+            self.remote_ip,
+            self.remote_port,
+            self.next_transmit_seq,
+            self.reassembler.get_next_expect(),
+            flags,
+            receive_window,
+        );
+    }
+}
+
+impl TCPReassembler {
+    fn new() -> TCPReassembler {
+        TCPReassembler {
+            next_sequence: 0,
+            out_of_order: Vec::new(),
+        }
+    }
+
+    fn set_next_expect(&mut self, seq_num: u32) {
+        self.next_sequence = seq_num;
+    }
+
+    fn add_packet(&mut self, mut packet: buf::NetBuffer, seq_num: u32) -> Option<buf::NetBuffer> {
+        if seq_num == self.next_sequence {
+            self.next_sequence = self.next_sequence.wrapping_add(packet.len() as u32);
+
+            // Check if any of the out-of-order packets can now be reassembled.
+            let mut i = 0;
+            while i < self.out_of_order.len() {
+                if util::seq_gt(seq_num, self.out_of_order[i].0) {
+                    // Remove packets before window.
+                    self.out_of_order.remove(i);
+                } else if self.out_of_order[i].0 == self.next_sequence {
+                    let (_, ooo_packet) = self.out_of_order.remove(i);
+                    self.next_sequence = self.next_sequence.wrapping_add(ooo_packet.len() as u32);
+                    packet.append_buffer(ooo_packet);
+                    i = 0;
+                } else {
+                    i += 1;
+                }
+            }
+
+            Some(packet)
+        } else {
+            // Note that this doesn't bother to order these or anything. I assume
+            // this case is infrequent enough that any optimization would be
+            // lost in the noise.
+            self.out_of_order.push((seq_num, packet));
+            None
+        }
+    }
+
+    fn get_next_expect(&self) -> u32 {
+        self.next_sequence
+    }
+}
+
+const TCP_HEADER_LEN: usize = 20;
+
 //
 //    0               1               2               3
 //    +-------------------------------+-------------------------------+
@@ -322,7 +329,8 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         return;
     }
 
-    let mut socket = handle.unwrap().lock().unwrap();
+    let sockref = handle.unwrap();
+    let mut socket = sockref.lock().unwrap();
     match socket.state {
         TCPState::SynSent => {
             if (flags & FLAG_RST) != 0 {
@@ -393,9 +401,36 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                 socket.receive_queue.append_buffer(got.unwrap());
             }
 
-            // Acknowledge packet. It's possible to delay this ack, but it
-            // creates a lot of potential performance issues.
-            socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+            socket.num_delayed_acks += 1;
+            if socket.num_delayed_acks >= MAX_DELAYED_ACKS {
+                println!("Sending immediate ack, num_delayed_acks={}", socket.num_delayed_acks);
+                socket.num_delayed_acks = 0;
+                if socket.delayed_ack_timer_id != -1 {
+                    timer::cancel_timer(socket.delayed_ack_timer_id);
+                    socket.delayed_ack_timer_id = -1;
+                }
+
+                socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+            } else if socket.delayed_ack_timer_id == -1 {
+                println!("Starting delayed ack timer");
+                socket.delayed_ack_timer_id = timer::set_timer(
+                    MAX_ACK_DELAY,
+                    |data| {
+                        println!("Sending delayed ack");
+                        let binding = data.unwrap();
+                        let handle = (*binding).downcast_ref::<Arc<Mutex<TCPSocket>>>().unwrap();
+                        let mut socket = handle.lock().unwrap();
+                        if matches!(socket.state, TCPState::Closed) {
+                            return;
+                        }
+
+                        socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+                        socket.delayed_ack_timer_id = -1;
+                    },
+                    Some(Box::new(sockref.clone())));
+            } else {
+                println!("Deferring ack, count is now {}", socket.num_delayed_acks);
+            }
             RECV_WAIT.notify_all();
         }
         _ => {
@@ -403,8 +438,6 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         }
     }
 }
-
-const TCP_HEADER_LEN: usize = 20;
 
 pub fn tcp_output(
     mut packet: buf::NetBuffer,
