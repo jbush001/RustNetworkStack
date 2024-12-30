@@ -20,38 +20,43 @@ use lazy_static::lazy_static;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::thread::sleep;
 use std::sync::Mutex;
+use std::any::Any;
 
 const MAX_TIMERS: usize = 32;
 const TIMER_INTERVAL: Duration = Duration::from_millis(50);
+type TimerData = Box<dyn Any + Send>;
+type TimerCallback = fn(TimerData);
 
-#[derive(Copy, Clone)]
 struct Timer {
     absolute_timeout: u64,
-    callback: fn(),
+    callback: TimerCallback,
+    data: Option<TimerData>,
     pending: bool,
     version: u32,
 }
 
 lazy_static! {
-    static ref TIMER_LIST: Mutex<[Timer; MAX_TIMERS]> = Mutex::new([Timer {
+    static ref TIMER_LIST: Mutex<Vec<Timer>> = Mutex::new((0..MAX_TIMERS).map(|_| Timer {
         absolute_timeout: 0,
-        callback: || {},
+        callback: |_| {},
+        data: None,
         pending: false,
         version: 0,
-    }; MAX_TIMERS]);
+    }).collect());
 }
 
 fn current_time_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
 }
 
-pub fn set_timer(timeout_ms: u32, callback: fn()) -> u32 {
+pub fn set_timer(timeout_ms: u32, callback: TimerCallback, data: TimerData) -> u32 {
     let mut list = TIMER_LIST.lock().unwrap();
     for i in 0..MAX_TIMERS {
         let timer = &mut list[i];
         if !timer.pending {
             timer.absolute_timeout = current_time_ms() + timeout_ms as u64;
             timer.callback = callback;
+            timer.data = Some(data);
             timer.pending = true;
             timer.version += 1;
             return timer.version * MAX_TIMERS as u32 + i as u32;
@@ -75,7 +80,7 @@ pub fn cancel_timer(timer_id: u32) -> bool {
 }
 
 pub fn init() {
-    std::thread::spawn(move || {
+    std::thread::spawn(|| {
         loop {
             sleep(TIMER_INTERVAL);
             let mut list = TIMER_LIST.lock().unwrap();
@@ -85,9 +90,11 @@ pub fn init() {
                 if timer.pending {
                     if now >= timer.absolute_timeout {
                         timer.pending = false;
+
                         let callback = timer.callback;
-                        drop(list);
-                        callback();
+                        let data = timer.data.take();
+                        drop(list);  // Unlock
+                        (callback)(data.unwrap());
                         list = TIMER_LIST.lock().unwrap();
                     }
                 }

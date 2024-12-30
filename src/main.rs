@@ -103,9 +103,9 @@ fn main() {
         test_udp_echo();
     });
 
-    timer::set_timer(1000, || {
-        println!("Timer expired");
-    });
+    timer::set_timer(1000, |x| {
+        println!("Timer expired {}", x.downcast_ref::<i32>().unwrap());
+    }, Box::new(42));
 
     test_tcp_connect();
 
