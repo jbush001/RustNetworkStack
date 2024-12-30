@@ -36,6 +36,7 @@
 
 use std::cmp;
 use std::sync::Mutex;
+use lazy_static::lazy_static;
 
 const FRAGMENT_SIZE: usize = 512;
 type FragPointer = Option<Box<BufferFragment>>;
@@ -67,68 +68,84 @@ pub struct BufferIterator<'a> {
     remaining: usize, // How many more bytes to copy.
 }
 
-const GROW_SIZE: usize = 16;
-static g_free_list: Mutex<FragPointer> = Mutex::new(FragPointer::None);
-static mut g_pool_size: usize = 0;
-static mut g_free_bufs: usize = 0;
-static mut g_total_allocs: u64 = 0;
-
-fn alloc_fragment() -> Box<BufferFragment> {
-    let mut free_list = g_free_list.lock().unwrap();
-    if free_list.is_none() {
-        // Add more nodes to the pool. I do this in bulk rather than one at a time,
-        // although I supposed one could make arguments for doing it either way.
-        for _ in 0..GROW_SIZE {
-            let mut frag = Box::new(BufferFragment::new());
-            frag.next = free_list.take();
-            free_list.replace(frag);
-        }
-
-        unsafe {
-            println!("Grow pool, g_free_bufs={}, g_pool_size={}", g_free_bufs, g_pool_size);
-            assert!(g_free_bufs == 0);
-            g_pool_size += GROW_SIZE;
-            g_free_bufs += GROW_SIZE;
-        }
-    }
-
-    unsafe {
-        assert!(g_free_bufs > 0);
-        assert!(g_pool_size > 0);
-        g_total_allocs += 1;
-        g_free_bufs -= 1;
-    }
-
-    let mut new_frag = free_list.take().unwrap();
-    if new_frag.next.is_some() {
-        free_list.replace(new_frag.next.take().unwrap());
-    }
-
-    new_frag.data_start = 0;
-    new_frag.data_end = 0;
-    new_frag.next = None;
-
-    new_frag
+struct BufferPool {
+    free_list: FragPointer,
+    total_bufs: usize,
+    free_bufs: usize,
+    total_allocs: u64,
 }
 
-/// Put a fragment back into the pool.
-/// It's still necessary to explicitly return these (vs having them
-/// automatically return when they go out of scope). The Box class does
-/// have an allocator parameter, but it is marked as unstable and not fully
-/// supported.
-fn free_fragment(mut fragment: Box<BufferFragment>) {
-    let mut free_list = g_free_list.lock().unwrap();
-    unsafe { g_free_bufs += 1; }
-    fragment.next = free_list.take();
-    free_list.replace(fragment);
+const POOL_GROW_SIZE: usize = 16;
+
+lazy_static! {
+    static ref BUFFER_POOL: Mutex<BufferPool> = Mutex::new(BufferPool::new());
+}
+
+impl BufferPool {
+    fn new() -> BufferPool {
+        BufferPool {
+            free_list: None,
+            total_bufs: 0,
+            free_bufs: 0,
+            total_allocs: 0,
+        }
+    }
+
+    // Add new nodes to buffer pool. These are individually heap allocated.
+    fn grow(&mut self) {
+        for _ in 0..POOL_GROW_SIZE {
+            let mut frag = Box::new(BufferFragment::new());
+            frag.next = self.free_list.take();
+            self.free_list.replace(frag);
+        }
+
+        self.total_bufs += POOL_GROW_SIZE;
+        self.free_bufs += POOL_GROW_SIZE;
+        println!("Grow pool, g_free_bufs={}, g_pool_size={}",
+            self.free_bufs, self.total_bufs);
+    }
+
+    /// Allocate a new fragment from the pool.
+    fn alloc(&mut self) -> Box<BufferFragment> {
+        if self.free_list.is_none() {
+            assert!(self.free_bufs == 0);
+            self.grow();
+        }
+
+        assert!(self.free_bufs > 0);
+        assert!(self.total_bufs > 0);
+        self.total_allocs += 1;
+        self.free_bufs -= 1;
+
+        let mut new_frag = self.free_list.take().unwrap();
+        if new_frag.next.is_some() {
+            self.free_list.replace(new_frag.next.take().unwrap());
+        }
+
+        new_frag.data_start = 0;
+        new_frag.data_end = 0;
+
+        new_frag
+    }
+
+    /// Put a fragment back into the pool.
+    /// It's still necessary to explicitly return these (vs having them
+    /// automatically return when they go out of scope). The Box class does
+    /// have an allocator parameter, but it is marked as unstable and not fully
+    /// supported.
+    fn free(&mut self, mut fragment: Box<BufferFragment>) {
+        self.free_bufs += 1;
+        assert!(self.free_bufs <= self.total_bufs);
+        fragment.next = self.free_list.take();
+        self.free_list.replace(fragment);
+    }
 }
 
 pub fn print_alloc_stats() {
-    unsafe {
-        println!("Total pool size: {} ({}k)", g_pool_size, g_pool_size * FRAGMENT_SIZE / 1024);
-        println!("Free buffers: {} ({}k)", g_free_bufs, g_free_bufs * FRAGMENT_SIZE / 1024);
-        println!("Total allocations: {}", g_total_allocs);
-    }
+    let pool = BUFFER_POOL.lock().unwrap();
+    println!("Pool size: {} ({}k)", pool.total_bufs, pool.total_bufs * FRAGMENT_SIZE / 1024);
+    println!("Free buffers: {} ({}k)", pool.free_bufs, pool.free_bufs * FRAGMENT_SIZE / 1024);
+    println!("Total allocs: {}", pool.total_allocs);
 }
 
 impl BufferFragment {
@@ -151,7 +168,7 @@ impl Drop for NetBuffer {
         let mut frag = self.fragments.take();
         while frag.is_some() {
             let next = frag.as_mut().unwrap().next.take();
-            free_fragment(frag.unwrap());
+            BUFFER_POOL.lock().unwrap().free(frag.unwrap());
             frag = next;
         }
     }
@@ -209,7 +226,7 @@ impl NetBuffer {
         if self.fragments.is_none() || self.fragments.as_ref().unwrap().data_start < size {
             // Prepend a new frag. We place the data at the end of the frag
             // to allow space for subsequent headers to be added.
-            let mut new_head_frag = alloc_fragment();
+            let mut new_head_frag = BUFFER_POOL.lock().unwrap().alloc();
             new_head_frag.data_start = FRAGMENT_SIZE - size;
             new_head_frag.data_end = FRAGMENT_SIZE;
             new_head_frag.next = if self.fragments.is_none() {
@@ -249,10 +266,10 @@ impl NetBuffer {
             remaining -= frag_len;
             let mut dead_frag = self.fragments.take().unwrap();
             self.fragments = dead_frag.next.take();
-            free_fragment(dead_frag);
+            BUFFER_POOL.lock().unwrap().free(dead_frag);
         }
 
-        // Truncate the front buffer
+        // Truncate the first buffer
         if remaining > 0 {
             let frag = self.fragments.as_mut().unwrap();
             frag.data_start += remaining;
@@ -270,7 +287,7 @@ impl NetBuffer {
 
         // Find the last frag (or, if the buffer is empty, create a new one)
         let mut last_frag = if self.fragments.is_none() {
-            self.fragments = Some(alloc_fragment());
+            self.fragments = Some(BUFFER_POOL.lock().unwrap().alloc());
             &mut self.fragments
         } else {
             let mut frag = &mut self.fragments;
@@ -290,7 +307,7 @@ impl NetBuffer {
             frag.data_end += copy_len;
             data_offset += copy_len;
             if data_offset < data.len() {
-                let new_frag = Some(alloc_fragment());
+                let new_frag = Some(BUFFER_POOL.lock().unwrap().alloc());
                 last_frag.as_mut().unwrap().next = new_frag;
                 last_frag = &mut last_frag.as_mut().unwrap().next;
             }
@@ -372,7 +389,8 @@ impl<'a> Iterator for BufferIterator<'a> {
 
 mod tests {
     fn no_leaks() -> bool {
-        unsafe { super::g_free_bufs == super::g_pool_size }
+        let pool = super::BUFFER_POOL.lock().unwrap();
+        pool.free_bufs == pool.total_bufs
     }
 
     #[test]
