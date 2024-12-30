@@ -20,17 +20,13 @@ use lazy_static::lazy_static;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::thread::sleep;
 use std::sync::Mutex;
-use std::any::Any;
 
 const MAX_TIMERS: usize = 32;
 const TIMER_INTERVAL: Duration = Duration::from_millis(50);
-pub type TimerData = Option<Box<dyn Any + Send>>;
-pub type TimerCallback = fn(TimerData);
 
 struct Timer {
     absolute_timeout: u64,
-    callback: TimerCallback,
-    data: TimerData,
+    closure: Option<Box<dyn FnOnce() + Send + Sync>>,
     pending: bool,
     version: u32,
 }
@@ -38,8 +34,7 @@ struct Timer {
 lazy_static! {
     static ref TIMER_LIST: Mutex<Vec<Timer>> = Mutex::new((0..MAX_TIMERS).map(|_| Timer {
         absolute_timeout: 0,
-        callback: |_| {},
-        data: None,
+        closure: None,
         pending: false,
         version: 0,
     }).collect());
@@ -55,14 +50,15 @@ fn generate_id(index: usize, version: u32) -> i32 {
 
 /// Valid timer IDs are always positive (this allows callers to use -1 to indicate
 /// no timer is pending)
-pub fn set_timer(timeout_ms: u32, callback: TimerCallback, data: TimerData) -> i32 {
+pub fn set_timer<F>(timeout_ms: u32, closure: F) -> i32
+    where F: FnOnce() + Send + Sync + 'static {
+
     let mut list = TIMER_LIST.lock().unwrap();
     for i in 0..MAX_TIMERS {
         let timer = &mut list[i];
         if !timer.pending {
             timer.absolute_timeout = current_time_ms() + timeout_ms as u64;
-            timer.callback = callback;
-            timer.data = data;
+            timer.closure = Some(Box::new(closure));
             timer.pending = true;
             timer.version += 1;
             return generate_id(i, timer.version);
@@ -97,10 +93,9 @@ pub fn init() {
                     if now >= timer.absolute_timeout {
                         timer.pending = false;
 
-                        let callback = timer.callback;
-                        let data = timer.data.take();
+                        let closure = timer.closure.take();
                         drop(list);  // Unlock
-                        (callback)(data);
+                        (closure.unwrap())();
                         list = TIMER_LIST.lock().unwrap();
                     }
                 }
@@ -108,3 +103,4 @@ pub fn init() {
         }
     });
 }
+

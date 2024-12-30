@@ -168,18 +168,19 @@ pub fn tcp_write(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) -> i32 {
     guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(data.len() as u32);
     guard.retransmit_queue.append_from_slice(data);
     if guard.retransmit_timer_id == -1 {
+        let socket_arc = socket.clone();
         guard.retransmit_timer_id = timer::set_timer(
             RETRANSMIT_INTERVAL,
-            retransmit,
-            Some(Box::new(socket.clone())));
+            || {
+                retransmit(socket_arc);
+            }
+        );
     }
 
     data.len() as i32
 }
 
-fn retransmit(data: timer::TimerData) {
-    let binding = data.unwrap();
-    let handle = (*binding).downcast_ref::<Arc<Mutex<TCPSocket>>>().unwrap();
+fn retransmit(handle: Arc<Mutex<TCPSocket>>) {
     let mut socket = handle.lock().unwrap();
     if matches!(socket.state, TCPState::Closed) {
         return;
@@ -191,10 +192,13 @@ fn retransmit(data: timer::TimerData) {
         println!("Retransmitting");
         util::print_binary(&packet.header());
         socket.send_packet(packet, FLAG_ACK | FLAG_PSH);
+        let socket_arc = handle.clone();
         socket.retransmit_timer_id = timer::set_timer(
             RETRANSMIT_INTERVAL,
-            retransmit,
-            Some(Box::new(handle.clone())));
+            || {
+                retransmit(socket_arc);
+            }
+        );
     }
 }
 
@@ -413,21 +417,19 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                 socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
             } else if socket.delayed_ack_timer_id == -1 {
                 println!("Starting delayed ack timer");
+                let socket_arc = sockref.clone();
                 socket.delayed_ack_timer_id = timer::set_timer(
                     MAX_ACK_DELAY,
-                    |data| {
+                    move || {
                         println!("Sending delayed ack");
-                        let binding = data.unwrap();
-                        let handle = (*binding).downcast_ref::<Arc<Mutex<TCPSocket>>>().unwrap();
-                        let mut socket = handle.lock().unwrap();
+                        let mut socket = socket_arc.lock().unwrap();
                         if matches!(socket.state, TCPState::Closed) {
                             return;
                         }
 
                         socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
                         socket.delayed_ack_timer_id = -1;
-                    },
-                    Some(Box::new(sockref.clone())));
+                    });
             } else {
                 println!("Deferring ack, count is now {}", socket.num_delayed_acks);
             }
