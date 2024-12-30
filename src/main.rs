@@ -60,8 +60,6 @@ fn test_tcp_connect() {
     println!("Press key to connect");
     let _ = std::io::stdin().read(&mut [0u8]).unwrap();
 
-    test_tcp_connect();
-
     let result = tcpv4::tcp_open(0x0a000001, 3000);
     if result.is_err() {
         println!("Failed to open socket: {}", result.err().unwrap());

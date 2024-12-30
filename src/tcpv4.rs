@@ -91,111 +91,19 @@ impl TCPSocket {
         }
     }
 
-    fn get_receive_win_size(&self) -> u16 {
-        MAX_RECEIVE_WINDOW - self.receive_queue.len() as u16
-    }
+    fn send_packet(&mut self, packet: buf::NetBuffer, flags: u8) {
+        let receive_window = MAX_RECEIVE_WINDOW - self.receive_queue.len() as u16;
 
-    fn handle_packet(
-        &mut self,
-        packet: buf::NetBuffer,
-        seq_num: u32,
-        ack_num: u32,
-        window_size: u16,
-        flags: u8
-    ) {
-        match self.state {
-            TCPState::SynSent => {
-                if (flags & FLAG_RST) != 0 {
-                    println!("Connection refused");
-                    self.state = TCPState::Closed;
-                    RECV_WAIT.notify_all();
-                    return;
-                }
-
-                if (flags & FLAG_ACK) != 0 {
-                    if ack_num != self.next_transmit_seq.wrapping_add(1) {
-                        println!("Unexpected ack {} wanted {}+1", ack_num, self.next_transmit_seq);
-                    }
-
-                    self.state = TCPState::Established;
-                    self.reassembler.set_next_expect(seq_num + 1);
-
-                    // The SYN consumes a sequence number.
-                    self.next_transmit_seq = self.next_transmit_seq.wrapping_add(1);
-
-                    tcp_output(
-                        buf::NetBuffer::new(),
-                        self.local_port,
-                        self.remote_ip,
-                        self.remote_port,
-                        self.next_transmit_seq,
-                        self.reassembler.get_next_expect(),
-                        FLAG_ACK,
-                        self.get_receive_win_size(),
-                    );
-
-                    // Wake up thread waiting in connect
-                    RECV_WAIT.notify_all();
-                }
-            }
-
-            TCPState::Established => {
-                if (flags & FLAG_FIN) != 0 {
-                    // XXX hack: should actually go into a closing state.
-                    self.state = TCPState::Closed;
-                    return;
-                }
-
-                if (flags & FLAG_RST) != 0 {
-                    println!("Connection reset");
-                    self.state = TCPState::Closed;
-                    return;
-                }
-
-                if (flags & FLAG_ACK) != 0 {
-                    if util::seq_gt(ack_num, self.next_transmit_seq) {
-                        println!("ERROR: Unexpected ack {} next_transmit_seq {}",
-                            ack_num, self.next_transmit_seq);
-                    } else {
-                        let oldest_unacked = self.next_transmit_seq.wrapping_sub(
-                            self.retransmit_queue.len() as u32);
-                        if util::seq_gt(ack_num, oldest_unacked) {
-                            let trim = ack_num.wrapping_sub(oldest_unacked) as usize;
-                            self.retransmit_queue.trim_head(trim);
-                            println!(
-                                "Trimming {} acked bytes from retransmit queue, size is now {}",
-                                trim, self.retransmit_queue.len()
-                            );
-                        }
-                    }
-
-                    self.transmit_window_max = ack_num.wrapping_add(window_size as u32);
-                }
-
-                let got = self.reassembler.add_packet(packet, seq_num);
-                if got.is_some() {
-                    self.receive_queue.append_buffer(got.unwrap());
-                }
-
-                // Acknowledge packet
-                // TODO: this should use a timer to delay the ack so it's not spammy.
-                tcp_output(
-                    buf::NetBuffer::new(),
-                    self.local_port,
-                    self.remote_ip,
-                    self.remote_port,
-                    self.next_transmit_seq,
-                    self.reassembler.get_next_expect(),
-                    FLAG_ACK,
-                    self.get_receive_win_size(),
-                );
-
-                RECV_WAIT.notify_all();
-            }
-            _ => {
-                println!("Unhandled state");
-            }
-        }
+        tcp_output(
+            packet,
+            self.local_port,
+            self.remote_ip,
+            self.remote_port,
+            self.next_transmit_seq,
+            self.reassembler.get_next_expect(),
+            flags,
+            receive_window,
+        );
     }
 }
 
@@ -222,16 +130,7 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16)
     guard.state = TCPState::SynSent;
 
     // TODO: Should set a timer to retry this if it isn't acknowledged.
-    tcp_output(
-        buf::NetBuffer::new(),
-        guard.local_port,
-        remote_ip,
-        remote_port,
-        guard.next_transmit_seq,
-        0,
-        FLAG_SYN,
-        guard.get_receive_win_size(),
-    );
+    guard.send_packet(buf::NetBuffer::new(), FLAG_SYN);
 
     // Wait until this is connected
     while !matches!(guard.state ,TCPState::Established) {
@@ -333,15 +232,9 @@ pub fn tcp_write(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) -> i32 {
 
     let mut packet = buf::NetBuffer::new();
     packet.append_from_slice(data);
-    tcp_output(
+    guard.send_packet(
         packet,
-        guard.local_port,
-        guard.remote_ip,
-        guard.remote_port,
-        guard.next_transmit_seq,
-        guard.reassembler.get_next_expect(),
         FLAG_ACK | FLAG_PSH,
-        guard.get_receive_win_size(),
     );
 
     // XXX Set the retransmit timer if it is not already pending.
@@ -375,15 +268,15 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     let seq_num = util::get_be32(&header[4..8]);
     let ack_num = util::get_be32(&header[8..12]);
     let header_size = ((header[12] >> 4) * 4) as usize;
-    let win_size = util::get_be16(&header[14..16]);
+    let remote_window_size = util::get_be16(&header[14..16]);
     let flags = header[13];
 
     packet.trim_head(header_size);
 
     // Lookup socket
     let mut port_map_guard = PORT_MAP.lock().unwrap();
-    let socket = port_map_guard.get_mut(&(source_ip, source_port, dest_port));
-    if socket.is_none() {
+    let handle = port_map_guard.get_mut(&(source_ip, source_port, dest_port));
+    if handle.is_none() {
         let response = buf::NetBuffer::new();
         tcp_output(
             response,
@@ -399,11 +292,83 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         return;
     }
 
-    socket
-        .unwrap()
-        .lock()
-        .unwrap()
-        .handle_packet(packet, seq_num, ack_num, win_size, flags);
+    let mut socket = handle.unwrap().lock().unwrap();
+    match socket.state {
+        TCPState::SynSent => {
+            if (flags & FLAG_RST) != 0 {
+                println!("Connection refused");
+                socket.state = TCPState::Closed;
+                RECV_WAIT.notify_all();
+                return;
+            }
+
+            if (flags & FLAG_ACK) != 0 {
+                if ack_num != socket.next_transmit_seq.wrapping_add(1) {
+                    println!("Unexpected ack {} wanted {}+1", ack_num, socket.next_transmit_seq);
+                }
+
+                socket.state = TCPState::Established;
+                socket.reassembler.set_next_expect(seq_num + 1);
+
+                // The SYN consumes a sequence number.
+                socket.next_transmit_seq = socket.next_transmit_seq.wrapping_add(1);
+
+                // Send ack to complete handshake
+                socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+
+                // Wake up thread waiting in connect
+                RECV_WAIT.notify_all();
+            }
+        }
+
+        TCPState::Established => {
+            if (flags & FLAG_FIN) != 0 {
+                // XXX hack: should actually go into a closing state.
+                socket.state = TCPState::Closed;
+                return;
+            }
+
+            if (flags & FLAG_RST) != 0 {
+                println!("Connection reset");
+                socket.state = TCPState::Closed;
+                return;
+            }
+
+            if (flags & FLAG_ACK) != 0 {
+                if util::seq_gt(ack_num, socket.next_transmit_seq) {
+                    println!("ERROR: Unexpected ack {} next_transmit_seq {}",
+                        ack_num, socket.next_transmit_seq);
+                } else {
+                    let oldest_unacked = socket.next_transmit_seq.wrapping_sub(
+                        socket.retransmit_queue.len() as u32);
+                    if util::seq_gt(ack_num, oldest_unacked) {
+                        let trim = ack_num.wrapping_sub(oldest_unacked) as usize;
+                        socket.retransmit_queue.trim_head(trim);
+                        println!(
+                            "Trimming {} acked bytes from retransmit queue, size is now {}",
+                            trim, socket.retransmit_queue.len()
+                        );
+                    }
+                }
+
+                socket.transmit_window_max = ack_num.wrapping_add(
+                    remote_window_size as u32);
+            }
+
+            let got = socket.reassembler.add_packet(packet, seq_num);
+            if got.is_some() {
+                socket.receive_queue.append_buffer(got.unwrap());
+            }
+
+            // Acknowledge packet
+            // TODO: this should use a timer to delay the ack so it's not spammy.
+            socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+            RECV_WAIT.notify_all();
+        }
+        _ => {
+            println!("Unhandled state");
+        }
+    }
 }
 
 const TCP_HEADER_LEN: usize = 20;
