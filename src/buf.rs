@@ -76,14 +76,17 @@ static mut g_total_allocs: u64 = 0;
 fn alloc_fragment() -> Box<BufferFragment> {
     let mut free_list = g_free_list.lock().unwrap();
     if free_list.is_none() {
-        // Grow the pool.
+        // Add more nodes to the pool. I do this in bulk rather than one at a time,
+        // although I supposed one could make arguments for doing it either way.
         for _ in 0..GROW_SIZE {
             let mut frag = Box::new(BufferFragment::new());
             frag.next = free_list.take();
-            *free_list = Some(frag);
+            free_list.replace(frag);
         }
 
         unsafe {
+            println!("Grow pool, g_free_bufs={}, g_pool_size={}", g_free_bufs, g_pool_size);
+            assert!(g_free_bufs == 0);
             g_pool_size += GROW_SIZE;
             g_free_bufs += GROW_SIZE;
         }
@@ -91,11 +94,16 @@ fn alloc_fragment() -> Box<BufferFragment> {
 
     unsafe {
         assert!(g_free_bufs > 0);
+        assert!(g_pool_size > 0);
         g_total_allocs += 1;
         g_free_bufs -= 1;
     }
 
     let mut new_frag = free_list.take().unwrap();
+    if new_frag.next.is_some() {
+        free_list.replace(new_frag.next.take().unwrap());
+    }
+
     new_frag.data_start = 0;
     new_frag.data_end = 0;
     new_frag.next = None;
@@ -112,7 +120,7 @@ fn free_fragment(mut fragment: Box<BufferFragment>) {
     let mut free_list = g_free_list.lock().unwrap();
     unsafe { g_free_bufs += 1; }
     fragment.next = free_list.take();
-    *free_list = Some(fragment);
+    free_list.replace(fragment);
 }
 
 pub fn print_alloc_stats() {
@@ -216,10 +224,11 @@ impl NetBuffer {
             // Adjust the start of the frag head
             let frag = self.fragments.as_mut().unwrap();
             frag.data_start -= size;
-
-            // Zero out contents
-            frag.data[frag.data_start..frag.data_start + size].fill(0);
         }
+
+        // Zero out contents of header.
+        let frag = self.fragments.as_mut().unwrap();
+        frag.data[frag.data_start..frag.data_start + size].fill(0);
 
         self.length += size;
     }
@@ -711,6 +720,21 @@ mod tests {
         assert_eq!(buf.len(), 522);
 
         std::mem::drop(buf);
+        assert!(no_leaks());
+    }
+
+
+    #[test]
+    fn test_grow_pool() {
+        let mut buflist = Vec::new();
+        for _ in 0..32 {
+            let mut buffer = super::NetBuffer::new();
+            buffer.append_from_slice(&[1; 512]);
+            buflist.push(buffer);
+        }
+
+        // Free buffers
+        std::mem::drop(buflist);
         assert!(no_leaks());
     }
 
