@@ -19,9 +19,9 @@ use crate::ipv4;
 use crate::util;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::Condvar;
 use std::sync::{Arc, Mutex};
-use std::collections::VecDeque;
 
 pub struct UDPSocket {
     receive_queue: VecDeque<(util::IPv4Addr, u16, buf::NetBuffer)>,

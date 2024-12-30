@@ -109,7 +109,7 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16)
     guard.send_packet(buf::NetBuffer::new(), FLAG_SYN);
 
     // Wait until this is connected
-    while !matches!(guard.state ,TCPState::Established) {
+    while !matches!(guard.state, TCPState::Established) {
         guard = RECV_WAIT.wait(guard).unwrap();
         if matches!(guard.state, TCPState::Closed) {
             return Err("Connection refused");
@@ -160,21 +160,15 @@ pub fn tcp_write(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) -> i32 {
 
     let mut packet = buf::NetBuffer::new();
     packet.append_from_slice(data);
-    guard.send_packet(
-        packet,
-        FLAG_ACK | FLAG_PSH,
-    );
+    guard.send_packet(packet, FLAG_ACK | FLAG_PSH);
 
     guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(data.len() as u32);
     guard.retransmit_queue.append_from_slice(data);
     if guard.retransmit_timer_id == -1 {
         let socket_arc = socket.clone();
-        guard.retransmit_timer_id = timer::set_timer(
-            RETRANSMIT_INTERVAL,
-            || {
-                retransmit(socket_arc);
-            }
-        );
+        guard.retransmit_timer_id = timer::set_timer(RETRANSMIT_INTERVAL, move || {
+            retransmit(socket_arc);
+        });
     }
 
     data.len() as i32
@@ -193,12 +187,9 @@ fn retransmit(handle: Arc<Mutex<TCPSocket>>) {
         util::print_binary(&packet.header());
         socket.send_packet(packet, FLAG_ACK | FLAG_PSH);
         let socket_arc = handle.clone();
-        socket.retransmit_timer_id = timer::set_timer(
-            RETRANSMIT_INTERVAL,
-            || {
-                retransmit(socket_arc);
-            }
-        );
+        socket.retransmit_timer_id = timer::set_timer(RETRANSMIT_INTERVAL, move || {
+            retransmit(socket_arc);
+        });
     }
 }
 
@@ -346,7 +337,8 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
 
             if (flags & FLAG_ACK) != 0 {
                 if ack_num != socket.next_transmit_seq.wrapping_add(1) {
-                    println!("Unexpected ack {} wanted {}+1", ack_num, socket.next_transmit_seq);
+                    println!("Unexpected ack {} wanted {}+1", ack_num,
+                        socket.next_transmit_seq);
                 }
 
                 socket.state = TCPState::Established;
@@ -379,8 +371,9 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                     println!("ERROR: Unexpected ack {} next_transmit_seq {}",
                         ack_num, socket.next_transmit_seq);
                 } else {
-                    let oldest_unacked = socket.next_transmit_seq.wrapping_sub(
-                        socket.retransmit_queue.len() as u32);
+                    let oldest_unacked = socket
+                        .next_transmit_seq
+                        .wrapping_sub(socket.retransmit_queue.len() as u32);
                     if util::seq_gt(ack_num, oldest_unacked) {
                         let trim = ack_num.wrapping_sub(oldest_unacked) as usize;
                         socket.retransmit_queue.trim_head(trim);
@@ -396,8 +389,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                     }
                 }
 
-                socket.transmit_window_max = ack_num.wrapping_add(
-                    remote_window_size as u32);
+                socket.transmit_window_max = ack_num.wrapping_add(remote_window_size as u32);
             }
 
             let got = socket.reassembler.add_packet(packet, seq_num);
@@ -407,7 +399,10 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
 
             socket.num_delayed_acks += 1;
             if socket.num_delayed_acks >= MAX_DELAYED_ACKS {
-                println!("Sending immediate ack, num_delayed_acks={}", socket.num_delayed_acks);
+                println!(
+                    "Sending immediate ack, num_delayed_acks={}",
+                    socket.num_delayed_acks
+                );
                 socket.num_delayed_acks = 0;
                 if socket.delayed_ack_timer_id != -1 {
                     timer::cancel_timer(socket.delayed_ack_timer_id);
@@ -418,18 +413,17 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
             } else if socket.delayed_ack_timer_id == -1 {
                 println!("Starting delayed ack timer");
                 let socket_arc = sockref.clone();
-                socket.delayed_ack_timer_id = timer::set_timer(
-                    MAX_ACK_DELAY,
-                    move || {
-                        println!("Sending delayed ack");
-                        let mut socket = socket_arc.lock().unwrap();
-                        if matches!(socket.state, TCPState::Closed) {
-                            return;
-                        }
+                socket.delayed_ack_timer_id = timer::set_timer(MAX_ACK_DELAY, move || {
+                    println!("Sending delayed ack");
+                    let mut socket = socket_arc.lock().unwrap();
+                    if matches!(socket.state, TCPState::Closed) {
+                        return;
+                    }
 
-                        socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
-                        socket.delayed_ack_timer_id = -1;
-                    });
+                    socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+                    socket.delayed_ack_timer_id = -1;
+                    socket.num_delayed_acks = 0;
+                });
             } else {
                 println!("Deferring ack, count is now {}", socket.num_delayed_acks);
             }

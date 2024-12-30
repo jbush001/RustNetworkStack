@@ -19,9 +19,9 @@ mod icmpv4;
 mod ipv4;
 mod netif;
 mod tcpv4;
+mod timer;
 mod udpv4;
 mod util;
-mod timer;
 
 use std::io::Read;
 use std::thread::sleep;
@@ -44,13 +44,15 @@ fn test_udp_echo() {
         let received = udpv4::udp_recv(&mut socket, &mut data, &mut source_addr, &mut source_port);
         println!(
             "Received UDP packet from {}:{} ({} bytes)",
-            source_addr,
-            source_port,
-            received
+            source_addr, source_port, received
         );
 
         util::print_binary(&data[..received as usize]);
-        udpv4::udp_send(&mut socket, source_addr, source_port, &data[..received as usize]);
+        udpv4::udp_send(
+            &mut socket,
+            source_addr,
+            source_port,
+            &data[..received as usize]);
         buf::print_alloc_stats();
     }
 }

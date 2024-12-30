@@ -17,9 +17,9 @@
 // XXX Very hacky...
 
 use lazy_static::lazy_static;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::thread::sleep;
 use std::sync::Mutex;
+use std::thread::sleep;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MAX_TIMERS: usize = 32;
 const TIMER_INTERVAL: Duration = Duration::from_millis(50);
@@ -51,8 +51,9 @@ fn generate_id(index: usize, version: u32) -> i32 {
 /// Valid timer IDs are always positive (this allows callers to use -1 to indicate
 /// no timer is pending)
 pub fn set_timer<F>(timeout_ms: u32, closure: F) -> i32
-    where F: FnOnce() + Send + Sync + 'static {
-
+where
+    F: FnOnce() + Send + Sync + 'static
+{
     let mut list = TIMER_LIST.lock().unwrap();
     for i in 0..MAX_TIMERS {
         let timer = &mut list[i];
@@ -94,7 +95,7 @@ pub fn init() {
                         timer.pending = false;
 
                         let closure = timer.closure.take();
-                        drop(list);  // Unlock
+                        drop(list); // Unlock
                         (closure.unwrap())();
                         list = TIMER_LIST.lock().unwrap();
                     }
