@@ -17,6 +17,7 @@
 use crate::buf;
 use crate::ipv4;
 use crate::netif;
+use crate::timer;
 use crate::util;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
@@ -28,6 +29,7 @@ use std::sync::{Arc, Mutex};
 type SocketKey = (util::IPv4Addr, u16, u16);
 const EPHEMERAL_PORT_BASE: u16 = 49152;
 const TCP_MTU: usize = 1500;
+const RETRANSMIT_INTERVAL: u32 = 1000; // HACK: this should back off
 
 const MAX_RECEIVE_WINDOW: u16 = 0xffff;
 
@@ -57,6 +59,7 @@ pub struct TCPSocket {
     next_transmit_seq: u32,
     retransmit_queue: buf::NetBuffer,
     transmit_window_max: u32, // Highest sequence we can transmit
+    retransmit_timer_id: i32,
 }
 
 pub struct TCPReassembler {
@@ -88,6 +91,7 @@ impl TCPSocket {
             receive_queue: buf::NetBuffer::new(),
             reassembler: TCPReassembler::new(),
             retransmit_queue: buf::NetBuffer::new(),
+            retransmit_timer_id: -1,
         }
     }
 
@@ -237,11 +241,37 @@ pub fn tcp_write(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) -> i32 {
         FLAG_ACK | FLAG_PSH,
     );
 
-    // XXX Set the retransmit timer if it is not already pending.
-
     guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(data.len() as u32);
     guard.retransmit_queue.append_from_slice(data);
+    if guard.retransmit_timer_id == -1 {
+        guard.retransmit_timer_id = timer::set_timer(
+            RETRANSMIT_INTERVAL,
+            retransmit,
+            Some(Box::new(socket.clone())));
+    }
+
     data.len() as i32
+}
+
+fn retransmit(data: timer::TimerData) {
+    let binding = data.unwrap();
+    let handle = (*binding).downcast_ref::<Arc<Mutex<TCPSocket>>>().unwrap();
+    let mut socket = handle.lock().unwrap();
+    if matches!(socket.state, TCPState::Closed) {
+        return;
+    }
+
+    if socket.retransmit_queue.len() > 0 {
+        let mut packet = buf::NetBuffer::new();
+        packet.append_from_buffer(&socket.retransmit_queue, TCP_MTU);
+        println!("Retransmitting");
+        util::print_binary(&packet.header());
+        socket.send_packet(packet, FLAG_ACK | FLAG_PSH);
+        socket.retransmit_timer_id = timer::set_timer(
+            RETRANSMIT_INTERVAL,
+            retransmit,
+            Some(Box::new(handle.clone())));
+    }
 }
 
 //
@@ -323,9 +353,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
 
         TCPState::Established => {
             if (flags & FLAG_FIN) != 0 {
-                // XXX hack: should actually go into a closing state.
-                socket.state = TCPState::Closed;
-                return;
+                // XXX todo: should go into a closing state.
             }
 
             if (flags & FLAG_RST) != 0 {
@@ -348,6 +376,11 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                             "Trimming {} acked bytes from retransmit queue, size is now {}",
                             trim, socket.retransmit_queue.len()
                         );
+
+                        if socket.retransmit_queue.len() == 0 {
+                            timer::cancel_timer(socket.retransmit_timer_id);
+                            socket.retransmit_timer_id = -1;
+                        }
                     }
                 }
 
@@ -360,8 +393,8 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                 socket.receive_queue.append_buffer(got.unwrap());
             }
 
-            // Acknowledge packet
-            // TODO: this should use a timer to delay the ack so it's not spammy.
+            // Acknowledge packet. It's possible to delay this ack, but it
+            // creates a lot of potential performance issues.
             socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
             RECV_WAIT.notify_all();
         }

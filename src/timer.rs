@@ -24,13 +24,13 @@ use std::any::Any;
 
 const MAX_TIMERS: usize = 32;
 const TIMER_INTERVAL: Duration = Duration::from_millis(50);
-type TimerData = Box<dyn Any + Send>;
-type TimerCallback = fn(TimerData);
+pub type TimerData = Option<Box<dyn Any + Send>>;
+pub type TimerCallback = fn(TimerData);
 
 struct Timer {
     absolute_timeout: u64,
     callback: TimerCallback,
-    data: Option<TimerData>,
+    data: TimerData,
     pending: bool,
     version: u32,
 }
@@ -49,29 +49,35 @@ fn current_time_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
 }
 
-pub fn set_timer(timeout_ms: u32, callback: TimerCallback, data: TimerData) -> u32 {
+fn generate_id(index: usize, version: u32) -> i32 {
+    (((version * MAX_TIMERS as u32) & 0x7fffff00) as i32) + index as i32
+}
+
+/// Valid timer IDs are always positive (this allows callers to use -1 to indicate
+/// no timer is pending)
+pub fn set_timer(timeout_ms: u32, callback: TimerCallback, data: TimerData) -> i32 {
     let mut list = TIMER_LIST.lock().unwrap();
     for i in 0..MAX_TIMERS {
         let timer = &mut list[i];
         if !timer.pending {
             timer.absolute_timeout = current_time_ms() + timeout_ms as u64;
             timer.callback = callback;
-            timer.data = Some(data);
+            timer.data = data;
             timer.pending = true;
             timer.version += 1;
-            return timer.version * MAX_TIMERS as u32 + i as u32;
+            return generate_id(i, timer.version);
         }
     }
 
     panic!("Out of timers");
 }
 
-pub fn cancel_timer(timer_id: u32) -> bool {
+pub fn cancel_timer(timer_id: i32) -> bool {
     let index = timer_id as usize % (MAX_TIMERS as usize);
-    let version = timer_id / (MAX_TIMERS as u32);
     let mut list = TIMER_LIST.lock().unwrap();
     let timer = &mut list[index];
-    if timer.version == version {
+    let this_id = generate_id(index, timer.version);
+    if timer_id == this_id {
         timer.pending = false;
         true
     } else {
@@ -94,7 +100,7 @@ pub fn init() {
                         let callback = timer.callback;
                         let data = timer.data.take();
                         drop(list);  // Unlock
-                        (callback)(data.unwrap());
+                        (callback)(data);
                         list = TIMER_LIST.lock().unwrap();
                     }
                 }

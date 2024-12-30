@@ -104,8 +104,8 @@ fn main() {
     });
 
     timer::set_timer(1000, |x| {
-        println!("Timer expired {}", x.downcast_ref::<i32>().unwrap());
-    }, Box::new(42));
+        println!("Timer expired {}", (*x.unwrap()).downcast_ref::<i32>().unwrap());
+    }, Some(Box::new(42)));
 
     test_tcp_connect();
 

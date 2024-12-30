@@ -9,8 +9,10 @@ PATTERN = ''.join(chr(i) for i in range(32, 126)) * 2
 LINE_LEN = 72
 
 listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 listen_sock.bind(('', PORT))
 listen_sock.listen(1)
+
 print('Listening on port', PORT)
 while True:
     client_conn, addr = listen_sock.accept()
