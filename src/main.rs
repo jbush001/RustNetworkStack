@@ -21,6 +21,7 @@ mod netif;
 mod tcpv4;
 mod udpv4;
 mod util;
+mod timer;
 
 use std::io::Read;
 use std::thread::sleep;
@@ -55,8 +56,11 @@ fn test_udp_echo() {
 }
 
 fn test_tcp_connect() {
-    // XXX Give a little time to start tcpdump
-    // std::thread::sleep(std::time::Duration::from_secs(5));
+    // Wait for a key press
+    println!("Press key to connect");
+    let _ = std::io::stdin().read(&mut [0u8]).unwrap();
+
+    test_tcp_connect();
 
     let result = tcpv4::tcp_open(0x0a000001, 3000);
     if result.is_err() {
@@ -92,18 +96,21 @@ fn test_tcp_connect() {
 
 fn main() {
     netif::init();
-    std::thread::spawn(move || {
+    timer::init();
+    std::thread::spawn(|| {
         packet_receive_thread();
     });
 
-    std::thread::spawn(move || {
+    std::thread::spawn(|| {
         test_udp_echo();
     });
 
-    // Wait for a key press
-    println!("Press key to connect");
-    let _ = std::io::stdin().read(&mut [0u8]).unwrap();
+    timer::set_timer(1000, || {
+        println!("Timer expired");
+    });
 
     test_tcp_connect();
+
+
     std::thread::park();
 }
