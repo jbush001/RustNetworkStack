@@ -619,7 +619,24 @@ mod tests {
 
         std::mem::drop(buf1);
         assert!(no_leaks());
+    }
 
+    #[test]
+    fn test_append_empty_buffer() {
+        let mut buf1 = super::NetBuffer::new();
+        buf1.append_from_slice(&[1, 2, 3, 4, 5]);
+        assert_eq!(buf1.len(), 5);
+
+        let buf2 = super::NetBuffer::new();
+        buf1.append_buffer(buf2);
+        assert_eq!(buf1.len(), 5);
+
+        let mut dest = [0; 5];
+        buf1.copy_to_slice(&mut dest);
+        assert_eq!(dest, [1, 2, 3, 4, 5]);
+
+        std::mem::drop(buf1);
+        assert!(no_leaks());
     }
 
     #[test]
@@ -683,6 +700,7 @@ mod tests {
 
     #[test]
     fn test_trim_head_header1() {
+        // Truncate the first fragment
         let mut buf = super::NetBuffer::new();
         let mut data = [0; 512];
         for i in 0..512 {
@@ -703,6 +721,7 @@ mod tests {
 
     #[test]
     fn test_trim_head_header2() {
+        // Remove an entire fragment
         let mut buf = super::NetBuffer::new();
         let mut data = [0; 512];
         for i in 0..512 {
@@ -711,8 +730,8 @@ mod tests {
 
         buf.append_from_slice(&data);
         assert_eq!(buf.len(), 512);
-        buf.alloc_header(20);
-        buf.trim_head(40); // This will remove an entire fragment
+        buf.alloc_header(20); // Prepends new fragment
+        buf.trim_head(40); // Remove first fragment and then some
         assert_eq!(buf.len(), 492);
         let header = buf.header();
         assert_eq!(header[0], 20);
@@ -741,9 +760,24 @@ mod tests {
         assert!(no_leaks());
     }
 
+    #[test]
+    fn test_trim_head_entire_buffer() {
+        // Trim removes all data in buffer.
+        let mut buf = super::NetBuffer::new();
+        buf.append_from_slice(&[1, 2, 3, 4, 5]);
+        assert_eq!(buf.len(), 5);
+
+        buf.trim_head(5);
+        assert_eq!(buf.len(), 0);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
+    }
 
     #[test]
     fn test_grow_pool() {
+        // Grow the underlying pool multiple times, then return it.
+        // (regression test for an issue in original implementation)
         let mut buflist = Vec::new();
         for _ in 0..32 {
             let mut buffer = super::NetBuffer::new();
