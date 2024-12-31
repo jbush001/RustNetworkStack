@@ -88,10 +88,12 @@ send UDP packets to it:
 
     python3 udp_test.py 10.0.0.2
 
-Testing TCP connect, uncomment test_tcp_connect in main.rs. Before launching app:
+To test TCP continuous transfer, before launching app:
 
     python3 chargen_server.py
 
-(Running for a while, then hitting ctrl-C in the terminal hosting the chargen_server
-will cause the socket to close on the network stack side, and it will dump memory
-usage statistics)
+Then launch the app as above and hit any key to begin the download.
+
+To test the full socket lifecycle, instead:
+
+    python3 -m http.server 3000

@@ -39,6 +39,11 @@ enum TCPState {
     Closed,
     SynSent,
     Established,
+    CloseWait,
+    LastAck,
+    FinWait1,
+    FinWait2,
+    Closing,
 }
 
 const FLAG_FIN: u8 = 1;
@@ -126,6 +131,23 @@ pub fn tcp_close(socket: &mut Arc<Mutex<TCPSocket>>) {
     guard.state = TCPState::Closed;
     RECV_WAIT.notify_all();
 
+    // XXX there's no retry here.
+    match guard.state {
+        TCPState::Established => {
+            println!("tcp_close called, in Established, sending FIN/ACK");
+            guard.send_packet(buf::NetBuffer::new(), FLAG_FIN | FLAG_ACK);
+            guard.state = TCPState::FinWait1;
+        }
+
+        TCPState::CloseWait => {
+            println!("tcp_close called, in CloseWait, sending FIN/ACK");
+            guard.send_packet(buf::NetBuffer::new(), FLAG_FIN | FLAG_ACK);
+            guard.state = TCPState::LastAck;
+        }
+
+        _ => {}
+    }
+
     // XXX normally should send FIN and move through close process,
     // but for now will free up memory
     let mut port_map_guard = PORT_MAP.lock().unwrap();
@@ -135,7 +157,7 @@ pub fn tcp_close(socket: &mut Arc<Mutex<TCPSocket>>) {
 pub fn tcp_read(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
     let mut guard = socket.lock().unwrap();
     loop {
-        if matches!(guard.state, TCPState::Closed) {
+        if matches!(guard.state, TCPState::Closed) && guard.receive_queue.len() == 0 {
             return -1;
         }
 
@@ -213,6 +235,12 @@ impl TCPSocket {
 
     fn send_packet(&mut self, packet: buf::NetBuffer, flags: u8) {
         let receive_window = MAX_RECEIVE_WINDOW - self.receive_queue.len() as u16;
+        let mut ack_seq = self.reassembler.get_next_expect();
+
+        // XXX BUG: if we've received a FIN and there
+        // are no outstanding packets that need to be
+        // retransmitted, we should increment the ack by
+        // 1 (note that FIN packets can contain data).
 
         tcp_output(
             packet,
@@ -220,7 +248,7 @@ impl TCPSocket {
             self.remote_ip,
             self.remote_port,
             self.next_transmit_seq,
-            self.reassembler.get_next_expect(),
+            ack_seq,
             flags,
             receive_window,
         );
@@ -357,7 +385,10 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
 
         TCPState::Established => {
             if (flags & FLAG_FIN) != 0 {
-                // XXX todo: should go into a closing state.
+                println!("Got FIN");
+                socket.state = TCPState::CloseWait;
+
+                // Ack will be sent below. FIN packets can contain data.
             }
 
             if (flags & FLAG_RST) != 0 {
@@ -398,7 +429,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
             }
 
             socket.num_delayed_acks += 1;
-            if socket.num_delayed_acks >= MAX_DELAYED_ACKS {
+            if socket.num_delayed_acks >= MAX_DELAYED_ACKS || (flags & FLAG_FIN) != 0 {
                 println!(
                     "Sending immediate ack, num_delayed_acks={}",
                     socket.num_delayed_acks
@@ -429,6 +460,64 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
             }
             RECV_WAIT.notify_all();
         }
+
+        TCPState::LastAck => {
+            if (flags & FLAG_ACK) != 0 {
+                println!("TCP LastAck: received ack connection closed");
+                if ack_num != socket.next_transmit_seq.wrapping_add(1) {
+                    println!("Unexpected ack {} wanted {}+1", ack_num,
+                        socket.next_transmit_seq);
+                }
+
+                socket.state = TCPState::Closed;
+            }
+        }
+
+        TCPState::FinWait1 => {
+            if (flags & FLAG_FIN) != 0 {
+                println!("TCP fin wait 1: received FIN");
+                if ack_num != socket.next_transmit_seq.wrapping_add(1) {
+                    println!("Unexpected ack {} wanted {}+1", ack_num,
+                        socket.next_transmit_seq);
+                }
+
+                socket.state = TCPState::Closing;
+            } else if (flags & FLAG_ACK) != 0 {
+                socket.state = TCPState::FinWait2;
+            }
+        }
+
+        TCPState::FinWait2 => {
+            if (flags & FLAG_FIN) != 0 {
+                println!("TCP fin wait 2: received FIN");
+                if ack_num != socket.next_transmit_seq.wrapping_add(1) {
+                    println!("Unexpected ack {} wanted {}+1", ack_num,
+                        socket.next_transmit_seq);
+                }
+
+                socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+                // XXX we don't support TimeWait
+                socket.state = TCPState::Closed;
+            }
+        }
+
+        TCPState::Closing => {
+            if (flags & FLAG_ACK) != 0 {
+                println!("TCP Closing: received ack connection closed");
+                if ack_num != socket.next_transmit_seq.wrapping_add(1) {
+                    println!("Unexpected ack {} wanted {}+1", ack_num,
+                        socket.next_transmit_seq);
+                }
+
+                // XXX we don't support TimeWait
+                socket.state = TCPState::Closed;
+            }
+        }
+
+        TCPState::Closed => {
+            println!("Received packet in closed state");
+        }
+
         _ => {
             println!("Unhandled state");
         }
