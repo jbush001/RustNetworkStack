@@ -476,6 +476,7 @@ pub fn tcp_output(
     ipv4::ip_output(packet, ipv4::PROTO_TCP, dest_ip);
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 

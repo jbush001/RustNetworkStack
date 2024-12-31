@@ -387,6 +387,7 @@ impl<'a> Iterator for BufferIterator<'a> {
     }
 }
 
+#[cfg(test)]
 mod tests {
     fn no_leaks() -> bool {
         let pool = super::BUFFER_POOL.lock().unwrap();
