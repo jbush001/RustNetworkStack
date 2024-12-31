@@ -132,8 +132,6 @@ pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16)
 
 pub fn tcp_close(socket: &mut Arc<Mutex<TCPSocket>>) {
     let mut guard = socket.lock().unwrap();
-    guard.state = TCPState::Closed;
-    RECV_WAIT.notify_all();
 
     // XXX there's no retry here.
     match guard.state {
@@ -151,11 +149,6 @@ pub fn tcp_close(socket: &mut Arc<Mutex<TCPSocket>>) {
 
         _ => {}
     }
-
-    // XXX normally should send FIN and move through close process,
-    // but for now will free up memory
-    let mut port_map_guard = PORT_MAP.lock().unwrap();
-    port_map_guard.remove(&(guard.remote_ip, guard.remote_port, guard.local_port));
 }
 
 pub fn tcp_read(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
@@ -537,6 +530,12 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         _ => {
             println!("Unhandled state: {:?}", socket.state);
         }
+    }
+
+    if matches!(socket.state, TCPState::Closed) {
+        drop(socket); // Unlock to avoid deadlock
+        port_map_guard.remove(&(source_ip, source_port, dest_port));
+        RECV_WAIT.notify_all();
     }
 }
 
