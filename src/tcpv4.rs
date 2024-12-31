@@ -448,36 +448,45 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
             RECV_WAIT.notify_all();
         }
 
-        socket.num_delayed_acks += 1;
-        if socket.num_delayed_acks >= MAX_DELAYED_ACKS || (flags & FLAG_FIN) != 0 {
-            println!(
-                "{}: Sending immediate ack, num_delayed_acks={}",
-                socket.to_string(), socket.num_delayed_acks
-            );
-            socket.num_delayed_acks = 0;
+        if matches!(socket.state, TCPState::Established) {
+            socket.num_delayed_acks += 1;
+            if socket.num_delayed_acks >= MAX_DELAYED_ACKS || (flags & FLAG_FIN) != 0 {
+                println!(
+                    "{}: Sending immediate ack, num_delayed_acks={}",
+                    socket.to_string(), socket.num_delayed_acks
+                );
+                socket.num_delayed_acks = 0;
+                if socket.delayed_ack_timer_id != -1 {
+                    timer::cancel_timer(socket.delayed_ack_timer_id);
+                    socket.delayed_ack_timer_id = -1;
+                }
+
+                socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+            } else if socket.delayed_ack_timer_id == -1 {
+                println!("{}: Starting delayed ack timer", socket.to_string());
+                let socket_arc = sockref.clone();
+                socket.delayed_ack_timer_id = timer::set_timer(MAX_ACK_DELAY, move || {
+                    let mut socket = socket_arc.lock().unwrap();
+                    if matches!(socket.state, TCPState::Closed) {
+                        return;
+                    }
+
+                    println!("{}: Sending delayed ack", socket.to_string());
+                    socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+                    socket.delayed_ack_timer_id = -1;
+                    socket.num_delayed_acks = 0;
+                });
+            } else {
+                println!("{}: Deferring ack, count is now {}", socket.to_string(),
+                    socket.num_delayed_acks);
+            }
+        } else {
             if socket.delayed_ack_timer_id != -1 {
                 timer::cancel_timer(socket.delayed_ack_timer_id);
                 socket.delayed_ack_timer_id = -1;
             }
 
             socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
-        } else if socket.delayed_ack_timer_id == -1 {
-            println!("{}: Starting delayed ack timer", socket.to_string());
-            let socket_arc = sockref.clone();
-            socket.delayed_ack_timer_id = timer::set_timer(MAX_ACK_DELAY, move || {
-                let mut socket = socket_arc.lock().unwrap();
-                if matches!(socket.state, TCPState::Closed) {
-                    return;
-                }
-
-                println!("{}: Sending delayed ack", socket.to_string());
-                socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
-                socket.delayed_ack_timer_id = -1;
-                socket.num_delayed_acks = 0;
-            });
-        } else {
-            println!("{}: Deferring ack, count is now {}", socket.to_string(),
-                socket.num_delayed_acks);
         }
     }
 
