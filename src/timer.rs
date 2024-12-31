@@ -14,38 +14,26 @@
 // limitations under the License.
 //
 
-// XXX Very hacky...
-
 use lazy_static::lazy_static;
 use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const MAX_TIMERS: usize = 32;
 const TIMER_INTERVAL: Duration = Duration::from_millis(50);
 
 struct Timer {
     absolute_timeout: u64,
     closure: Option<Box<dyn FnOnce() + Send + Sync>>,
-    pending: bool,
-    version: u32,
+    id: i32,
 }
 
 lazy_static! {
-    static ref TIMER_LIST: Mutex<Vec<Timer>> = Mutex::new((0..MAX_TIMERS).map(|_| Timer {
-        absolute_timeout: 0,
-        closure: None,
-        pending: false,
-        version: 0,
-    }).collect());
+    static ref TIMER_LIST: Mutex<Vec<Timer>> = Mutex::new(Vec::new());
+    static ref NEXT_TIMER_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 }
 
 fn current_time_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
-}
-
-fn generate_id(index: usize, version: u32) -> i32 {
-    (((version * MAX_TIMERS as u32) & 0x7fffff00) as i32) + index as i32
 }
 
 /// Valid timer IDs are always positive (this allows callers to use -1 to indicate
@@ -55,31 +43,29 @@ where
     F: FnOnce() + Send + Sync + 'static
 {
     let mut list = TIMER_LIST.lock().unwrap();
-    for i in 0..MAX_TIMERS {
-        let timer = &mut list[i];
-        if !timer.pending {
-            timer.absolute_timeout = current_time_ms() + timeout_ms as u64;
-            timer.closure = Some(Box::new(closure));
-            timer.pending = true;
-            timer.version += 1;
-            return generate_id(i, timer.version);
-        }
-    }
 
-    panic!("Out of timers");
+    let id = (NEXT_TIMER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        & 0x7fffffff) as i32;
+    list.push(Timer {
+        absolute_timeout: current_time_ms() + timeout_ms as u64,
+        closure: Some(Box::new(closure)),
+        id: id,
+    });
+
+    id
 }
 
 pub fn cancel_timer(timer_id: i32) -> bool {
-    let index = timer_id as usize % (MAX_TIMERS as usize);
     let mut list = TIMER_LIST.lock().unwrap();
-    let timer = &mut list[index];
-    let this_id = generate_id(index, timer.version);
-    if timer_id == this_id {
-        timer.pending = false;
-        true
-    } else {
-        false
+    for i in 0..list.len() {
+        let timer = &list[i];
+        if timer.id == timer_id {
+            list.swap_remove(i);
+            return true;
+        }
     }
+
+    false
 }
 
 pub fn init() {
@@ -88,20 +74,20 @@ pub fn init() {
             sleep(TIMER_INTERVAL);
             let mut list = TIMER_LIST.lock().unwrap();
             let now = current_time_ms();
-            for i in 0..MAX_TIMERS {
-                let timer = &mut list[i];
-                if timer.pending {
-                    if now >= timer.absolute_timeout {
-                        timer.pending = false;
-
-                        let closure = timer.closure.take();
-                        drop(list); // Unlock
-                        (closure.unwrap())();
-                        list = TIMER_LIST.lock().unwrap();
-                    }
+            let mut i = 0;
+            while i < list.len() {
+                if now >= list[i].absolute_timeout {
+                    let timer = list.remove(i);
+                    let closure = timer.closure;
+                    drop(list); // Unlock
+                    (closure.unwrap())();
+                    list = TIMER_LIST.lock().unwrap();
+                } else {
+                    i += 1;
                 }
             }
         }
     });
 }
+
 
