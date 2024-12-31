@@ -410,8 +410,9 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     let sockref = pm_entry.expect("just checked if pm_entry is none above").clone();
     let mut socket = sockref.lock().unwrap();
 
-    println!("{}: tcp_input: flags {} seq {} ack {} window {}",
-        socket.to_string(), flags_to_str(flags), seq_num, ack_num, remote_window_size);
+    println!("{}: tcp_input: flags {} seq {} ack {} window {} ({} bytes of data)",
+        socket.to_string(), flags_to_str(flags), seq_num, ack_num, remote_window_size,
+        packet.len());
     if flags & FLAG_ACK != 0 {
         let expected = if matches!(socket.state, TCPState::Established) {
             socket.next_transmit_seq
@@ -535,9 +536,19 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         }
 
         TCPState::FinWait1 => {
-            if (flags & FLAG_FIN) != 0 {
+            if (flags & FLAG_ACK != 0) && (flags & FLAG_FIN != 0)
+                && ack_num == socket.next_transmit_seq.wrapping_add(1)
+            {
+                socket.set_state(TCPState::TimeWait);
+                let sockrefclone = sockref.clone();
+                timer::set_timer(TIME_WAIT_TIMEOUT, move || {
+                    time_wait_timeout(sockrefclone);
+                });
+            } else if (flags & FLAG_FIN) != 0 {
                 socket.set_state(TCPState::Closing);
-            } else if (flags & FLAG_ACK) != 0 {
+                socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+                set_response_timer(&mut socket, sockref.clone());
+            } else if (flags & FLAG_ACK) != 0 && ack_num == socket.next_transmit_seq.wrapping_add(1) {
                 socket.set_state(TCPState::FinWait2);
             }
         }

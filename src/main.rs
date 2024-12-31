@@ -75,7 +75,7 @@ fn test_tcp_connect() {
     const REQUEST_STRING: &str = "GET / HTTP/1.0\r\n\r\n";
     const REQUEST_BYTES: &[u8] = REQUEST_STRING.as_bytes();
     tcpv4::tcp_write(&mut socket, REQUEST_BYTES);
-    loop {
+    for count in 0..25 {
         sleep(Duration::from_millis(100));
         let mut data = [0; 1500];
         let received = tcpv4::tcp_read(&mut socket, &mut data);
@@ -88,6 +88,7 @@ fn test_tcp_connect() {
         }
     }
 
+    println!("Closing socket");
     buf::print_alloc_stats();
     tcpv4::tcp_close(&mut socket);
     std::mem::drop(socket);
