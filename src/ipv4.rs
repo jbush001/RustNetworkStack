@@ -60,7 +60,7 @@ pub fn ip_input(mut packet: buf::NetBuffer) {
     }
 
     let protocol = header[9] as u8;
-    let source_addr = util::get_be32(&header[12..16]);
+    let source_addr = util::IPv4Addr::new_from(&header[12..16]);
 
     packet.trim_head(header_len);
 
@@ -87,8 +87,8 @@ pub fn ip_output(mut packet: buf::NetBuffer, protocol: u8, dest_addr: util::IPv4
 
     header[8] = DEFAULT_TTL; // TTL
     header[9] = protocol; // Protocol
-    util::set_be32(&mut header[12..16], netif::get_ipaddr()); // Source Address
-    util::set_be32(&mut header[16..24], dest_addr); // Destination Address
+    netif::get_ipaddr().copy_to(&mut header[12..16]); // Source Address
+    dest_addr.copy_to(&mut header[16..20]); // Destination Address
 
     let checksum = util::compute_checksum(&header[..IP_HEADER_LEN]);
     util::set_be16(&mut header[10..12], checksum);

@@ -461,8 +461,8 @@ pub fn tcp_output(
     // Compute checksum
     // First need to create a pseudo header
     let mut pseudo_header = [0u8; 12];
-    util::set_be32(&mut pseudo_header[0..4], netif::get_ipaddr());
-    util::set_be32(&mut pseudo_header[4..8], dest_ip);
+    netif::get_ipaddr().copy_to(&mut pseudo_header[0..4]);
+    dest_ip.copy_to(&mut pseudo_header[4..8]);
     pseudo_header[8] = 0; // Reserved
     pseudo_header[9] = ipv4::PROTO_TCP; // Protocol
     util::set_be16(&mut pseudo_header[10..12], length); // TCP length (header + data)

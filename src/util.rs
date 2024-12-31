@@ -15,8 +15,33 @@
 //
 
 use crate::buf;
+use std::convert::TryInto;
 
-pub type IPv4Addr = u32;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct IPv4Addr {
+    addr: [u8; 4],
+}
+
+impl IPv4Addr {
+    pub const fn new() -> Self {
+        Self { addr: [0; 4] }
+    }
+
+    pub fn new_from(addr: &[u8]) -> Self {
+        Self { addr: addr.try_into().unwrap() }
+    }
+
+    pub fn copy_to(&self, buffer: &mut [u8]) {
+        buffer.copy_from_slice(&self.addr);
+    }
+}
+
+impl ToString for IPv4Addr {
+    fn to_string(&self) -> String {
+        format!("{}.{}.{}.{}",
+            self.addr[0], self.addr[1], self.addr[2], self.addr[3])
+    }
+}
 
 // Compute one's complement sum, per RFV 1071
 // https://datatracker.ietf.org/doc/html/rfc1071
@@ -74,16 +99,6 @@ pub fn set_be32(buffer: &mut [u8], value: u32) {
     buffer[1] = ((value >> 16) & 0xff) as u8;
     buffer[2] = ((value >> 8) & 0xff) as u8;
     buffer[3] = (value & 0xff) as u8;
-}
-
-pub fn ip_to_str(addr: IPv4Addr) -> String {
-    format!(
-        "{}.{}.{}.{}",
-        (addr >> 24) & 0xff,
-        (addr >> 16) & 0xff,
-        (addr >> 8) & 0xff,
-        addr & 0xff
-    )
 }
 
 pub fn print_binary(buffer: &[u8]) {
@@ -178,7 +193,9 @@ mod tests {
 
     #[test]
     fn test_ip_to_str() {
-        assert_eq!(super::ip_to_str(0x12345678), "18.52.86.120");
+        assert_eq!(super::IPv4Addr::new_from(
+            &[18u8, 52, 86, 120]).to_string(),
+            "18.52.86.120");
     }
 
     #[test]

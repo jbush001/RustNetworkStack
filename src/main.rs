@@ -37,14 +37,14 @@ fn packet_receive_thread() {
 fn test_udp_echo() {
     let mut socket = udpv4::udp_open(8000);
     loop {
-        let mut source_addr: util::IPv4Addr = 0;
+        let mut source_addr: util::IPv4Addr = util::IPv4Addr::new();
         let mut source_port: u16 = 0;
         let mut data = [0; 1500];
 
         let received = udpv4::udp_recv(&mut socket, &mut data, &mut source_addr, &mut source_port);
         println!(
             "Received UDP packet from {}:{} ({} bytes)",
-            source_addr, source_port, received
+            source_addr.to_string(), source_port, received
         );
 
         util::print_binary(&data[..received as usize]);
@@ -62,7 +62,7 @@ fn test_tcp_connect() {
     println!("Press key to connect");
     let _ = std::io::stdin().read(&mut [0u8]).unwrap();
 
-    let result = tcpv4::tcp_open(0x0a000001, 3000);
+    let result = tcpv4::tcp_open(util::IPv4Addr::new_from(&[10u8, 0, 0, 1]), 3000);
     if result.is_err() {
         println!("Failed to open socket: {}", result.err().unwrap());
         return;
