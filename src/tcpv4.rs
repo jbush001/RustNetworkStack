@@ -218,6 +218,31 @@ fn retransmit(handle: Arc<Mutex<TCPSocket>>) {
     }
 }
 
+fn flags_to_str(flags: u8) -> String {
+    let mut result = String::new();
+    if flags & FLAG_FIN != 0 {
+        result.push_str("F");
+    }
+
+    if flags & FLAG_SYN != 0 {
+        result.push_str("S");
+    }
+
+    if flags & FLAG_RST != 0 {
+        result.push_str("R");
+    }
+
+    if flags & FLAG_PSH != 0 {
+        result.push_str("P");
+    }
+
+    if flags & FLAG_ACK != 0 {
+        result.push_str("A");
+    }
+
+    result
+}
+
 impl TCPSocket {
     fn new(remote_ip: util::IPv4Addr, remote_port: u16, local_port: u16) -> TCPSocket {
         TCPSocket {
@@ -245,14 +270,16 @@ impl TCPSocket {
         // number. But we should only do this if we have received all other outstanding
         // data. For now I'm assuming we have.
         let ack_seq = self.reassembler.get_next_expect() +
-            if matches!(self.state, TCPState::FinWait1 | TCPState::FinWait2 | TCPState::Closing) {
+            if matches!(self.state,
+                TCPState::FinWait1 | TCPState::FinWait2 | TCPState::Closing | TCPState::CloseWait) {
                 1
             } else {
                 0
             };
 
-        println!("send_packet: state {:?} flags {:x} seq {} ack {}",
-            self.state, flags, self.next_transmit_seq, ack_seq);
+        println!("{}: send_packet: flags {} seq {} ack {} window {}",
+            self.to_string(), flags_to_str(flags),
+            self.next_transmit_seq, ack_seq, receive_window);
 
         tcp_output(
             packet,
@@ -276,7 +303,7 @@ impl TCPSocket {
 
 impl ToString for TCPSocket {
     fn to_string(&self) -> String {
-        format!("localhost:{} <-> {}:{}", self.local_port, self.remote_ip, self.remote_port)
+        format!("localhost:{} {}:{}", self.local_port, self.remote_ip, self.remote_port)
     }
 }
 
@@ -380,12 +407,18 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     let sockref = pm_entry.expect("just checked if pm_entry is none above").clone();
     let mut socket = sockref.lock().unwrap();
 
-    println!("{}: tcp_input: state {:?} flags {:x} seq {} ack {}",
-        socket.to_string(), socket.state, flags, seq_num, ack_num);
+    println!("{}: tcp_input: flags {} seq {} ack {} window {}",
+        socket.to_string(), flags_to_str(flags), seq_num, ack_num, remote_window_size);
     if flags & FLAG_ACK != 0 {
-        if ack_num != socket.next_transmit_seq.wrapping_add(1) {
-            println!("{}: Unexpected ack {} wanted {}+1", socket.to_string(),
-                ack_num, socket.next_transmit_seq);
+        let expected = if matches!(socket.state, TCPState::Established) {
+            socket.next_transmit_seq
+        } else {
+            socket.next_transmit_seq.wrapping_add(1)
+        };
+
+        if ack_num != expected {
+            println!("{}: Unexpected ack {} expected {}", socket.to_string(),
+                ack_num, expected);
         }
     }
 
