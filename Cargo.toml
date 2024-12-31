@@ -5,6 +5,7 @@ edition = "2018"
 
 [dependencies]
 lazy_static = "1.5"
+mark-flaky-tests = "1.0.2"
 rand = "0.8.5"
 
 [build-dependencies]
