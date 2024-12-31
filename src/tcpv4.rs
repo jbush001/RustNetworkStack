@@ -67,6 +67,7 @@ pub struct TCPSocket {
     reassembler: TCPReassembler,
     delayed_ack_timer_id: i32,
     num_delayed_acks: u32,
+    highest_seq_received: u32,
 
     // Transmit
     next_transmit_seq: u32,
@@ -260,18 +261,20 @@ impl TCPSocket {
             retransmit_timer_id: -1,
             response_timer_id: -1,
             request_retry_count: 0,
+            highest_seq_received: 0,
         }
     }
 
     fn send_packet(&mut self, packet: buf::NetBuffer, flags: u8) {
         let receive_window = MAX_RECEIVE_WINDOW - self.receive_queue.len() as u16;
 
-        // HACK: we need to acknowledge the FIN packet, which consumes a sequence
+        // We need to acknowledge the FIN packet, which consumes a sequence
         // number. But we should only do this if we have received all other outstanding
-        // data. For now I'm assuming we have.
+        // data.
         let ack_seq = self.reassembler.get_next_expect() +
             if matches!(self.state,
-                TCPState::FinWait1 | TCPState::FinWait2 | TCPState::Closing | TCPState::CloseWait) {
+                TCPState::FinWait1 | TCPState::FinWait2 | TCPState::Closing | TCPState::CloseWait)
+                && self.highest_seq_received == self.reassembler.get_next_expect() {
                 1
             } else {
                 0
@@ -434,6 +437,49 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         return;
     }
 
+    if packet.len() > 0 {
+        // Handle received data
+        socket.highest_seq_received = std::cmp::max(
+            socket.highest_seq_received, seq_num.wrapping_add(packet.len() as u32));
+        let got = socket.reassembler.add_packet(packet, seq_num);
+        if got.is_some() {
+            socket.receive_queue.append_buffer(got.unwrap());
+            RECV_WAIT.notify_all();
+        }
+
+        socket.num_delayed_acks += 1;
+        if socket.num_delayed_acks >= MAX_DELAYED_ACKS || (flags & FLAG_FIN) != 0 {
+            println!(
+                "{}: Sending immediate ack, num_delayed_acks={}",
+                socket.to_string(), socket.num_delayed_acks
+            );
+            socket.num_delayed_acks = 0;
+            if socket.delayed_ack_timer_id != -1 {
+                timer::cancel_timer(socket.delayed_ack_timer_id);
+                socket.delayed_ack_timer_id = -1;
+            }
+
+            socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+        } else if socket.delayed_ack_timer_id == -1 {
+            println!("{}: Starting delayed ack timer", socket.to_string());
+            let socket_arc = sockref.clone();
+            socket.delayed_ack_timer_id = timer::set_timer(MAX_ACK_DELAY, move || {
+                let mut socket = socket_arc.lock().unwrap();
+                if matches!(socket.state, TCPState::Closed) {
+                    return;
+                }
+
+                println!("{}: Sending delayed ack", socket.to_string());
+                socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+                socket.delayed_ack_timer_id = -1;
+                socket.num_delayed_acks = 0;
+            });
+        } else {
+            println!("{}: Deferring ack, count is now {}", socket.to_string(),
+                socket.num_delayed_acks);
+        }
+    }
+
     match socket.state {
         TCPState::SynSent => {
             if (flags & FLAG_ACK) != 0 {
@@ -480,45 +526,6 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
 
                 socket.transmit_window_max = ack_num.wrapping_add(remote_window_size as u32);
             }
-
-            let got = socket.reassembler.add_packet(packet, seq_num);
-            if got.is_some() {
-                socket.receive_queue.append_buffer(got.unwrap());
-            }
-
-            socket.num_delayed_acks += 1;
-            if socket.num_delayed_acks >= MAX_DELAYED_ACKS || (flags & FLAG_FIN) != 0 {
-                println!(
-                    "{}: Sending immediate ack, num_delayed_acks={}",
-                    socket.to_string(), socket.num_delayed_acks
-                );
-                socket.num_delayed_acks = 0;
-                if socket.delayed_ack_timer_id != -1 {
-                    timer::cancel_timer(socket.delayed_ack_timer_id);
-                    socket.delayed_ack_timer_id = -1;
-                }
-
-                socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
-            } else if socket.delayed_ack_timer_id == -1 {
-                println!("{}: Starting delayed ack timer", socket.to_string());
-                let socket_arc = sockref.clone();
-                socket.delayed_ack_timer_id = timer::set_timer(MAX_ACK_DELAY, move || {
-                    let mut socket = socket_arc.lock().unwrap();
-                    if matches!(socket.state, TCPState::Closed) {
-                        return;
-                    }
-
-                    println!("{}: Sending delayed ack", socket.to_string());
-                    socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
-                    socket.delayed_ack_timer_id = -1;
-                    socket.num_delayed_acks = 0;
-                });
-            } else {
-                println!("{}: Deferring ack, count is now {}", socket.to_string(),
-                    socket.num_delayed_acks);
-            }
-
-            RECV_WAIT.notify_all();
         }
 
         TCPState::LastAck => {
