@@ -24,7 +24,6 @@ use std::collections::HashMap;
 use std::sync::Condvar;
 use std::sync::{Arc, Mutex};
 
-
 /// Each socket is uniquely identified by the tuple of remote_ip/remote_port/local_port
 type SocketKey = (util::IPv4Addr, u16, u16);
 const EPHEMERAL_PORT_BASE: u16 = 49152;
@@ -35,6 +34,7 @@ const MAX_DELAYED_ACKS: u32 = 5;
 
 const MAX_RECEIVE_WINDOW: u16 = 0xffff;
 
+#[derive(Debug)]
 enum TCPState {
     Closed,
     SynSent,
@@ -85,17 +85,21 @@ lazy_static! {
     static ref RECV_WAIT: Condvar = Condvar::new();
 }
 
-// XXX this is not protected with a lock.
-static mut NEXT_EPHEMERAL_PORT: u16 = EPHEMERAL_PORT_BASE;
+/// Generate a random ephemeral port that doesn't conflict with any open sockets.
+fn get_ephemeral_port(remote_ip: util::IPv4Addr, remote_port: u16) -> u16 {
+    loop {
+        const RANGE: u16 = (0xffff - EPHEMERAL_PORT_BASE) as u16;
+        let port = EPHEMERAL_PORT_BASE + (rand::random::<u16>() % RANGE);
+        if !PORT_MAP.lock().unwrap().contains_key(&(remote_ip, remote_port, port)) {
+            return port;
+        }
+    }
+}
 
 pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16)
     -> Result<Arc<Mutex<TCPSocket>>, &'static str>
 {
-    let local_port = unsafe { NEXT_EPHEMERAL_PORT };
-    unsafe {
-        NEXT_EPHEMERAL_PORT += 1;
-    }
-
+    let local_port =  get_ephemeral_port(remote_ip, remote_port);
     let handle = Arc::new(Mutex::new(TCPSocket::new(
         remote_ip,
         remote_port,
@@ -157,7 +161,7 @@ pub fn tcp_close(socket: &mut Arc<Mutex<TCPSocket>>) {
 pub fn tcp_read(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
     let mut guard = socket.lock().unwrap();
     loop {
-        if matches!(guard.state, TCPState::Closed) && guard.receive_queue.len() == 0 {
+        if !matches!(guard.state, TCPState::Established) && guard.receive_queue.len() == 0 {
             return -1;
         }
 
@@ -221,7 +225,7 @@ impl TCPSocket {
             remote_ip: remote_ip,
             remote_port: remote_port,
             local_port: local_port,
-            next_transmit_seq: 1, // XXX this should be randomized
+            next_transmit_seq: rand::random::<u32>(),
             transmit_window_max: 0,
             state: TCPState::Closed,
             receive_queue: buf::NetBuffer::new(),
@@ -235,12 +239,19 @@ impl TCPSocket {
 
     fn send_packet(&mut self, packet: buf::NetBuffer, flags: u8) {
         let receive_window = MAX_RECEIVE_WINDOW - self.receive_queue.len() as u16;
-        let mut ack_seq = self.reassembler.get_next_expect();
 
-        // XXX BUG: if we've received a FIN and there
-        // are no outstanding packets that need to be
-        // retransmitted, we should increment the ack by
-        // 1 (note that FIN packets can contain data).
+        // HACK: we need to acknowledge the FIN packet, which consumes a sequence
+        // number. But we should only do this if we have received all other outstanding
+        // data. For now I'm assuming we have.
+        let ack_seq = self.reassembler.get_next_expect() +
+            if matches!(self.state, TCPState::FinWait1 | TCPState::FinWait2 | TCPState::Closing) {
+                1
+            } else {
+                0
+            };
+
+        println!("send_packet: state {:?} flags {:x} seq {} ack {}",
+            self.state, flags, self.next_transmit_seq, ack_seq);
 
         tcp_output(
             packet,
@@ -354,6 +365,9 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
 
     let sockref = handle.unwrap();
     let mut socket = sockref.lock().unwrap();
+
+    println!("tcp_input: state {:?} flags {:x} seq {} ack {}",
+        socket.state, flags, seq_num, ack_num);
     match socket.state {
         TCPState::SynSent => {
             if (flags & FLAG_RST) != 0 {
@@ -389,11 +403,13 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                 socket.state = TCPState::CloseWait;
 
                 // Ack will be sent below. FIN packets can contain data.
+                RECV_WAIT.notify_all();
             }
 
             if (flags & FLAG_RST) != 0 {
                 println!("Connection reset");
                 socket.state = TCPState::Closed;
+                RECV_WAIT.notify_all();
                 return;
             }
 
@@ -519,7 +535,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         }
 
         _ => {
-            println!("Unhandled state");
+            println!("Unhandled state: {:?}", socket.state);
         }
     }
 }

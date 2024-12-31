@@ -105,11 +105,6 @@ fn main() {
         test_udp_echo();
     });
 
-    let x = Box::new(42);
-    timer::set_timer(1000, move || {
-        println!("Timer expired {}", *x);
-    });
-
     test_tcp_connect();
 
 
