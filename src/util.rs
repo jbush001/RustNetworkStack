@@ -36,9 +36,9 @@ impl IPv4Addr {
     }
 }
 
-impl ToString for IPv4Addr {
-    fn to_string(&self) -> String {
-        format!("{}.{}.{}.{}",
+impl std::fmt::Display for IPv4Addr {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}.{}.{}.{}",
             self.addr[0], self.addr[1], self.addr[2], self.addr[3])
     }
 }
