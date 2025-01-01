@@ -27,8 +27,10 @@ struct IOVec {
 
 extern "C" {
     fn tun_init() -> i32;
-    fn tun_recv(buffer: *mut u8, length: usize) -> i32;
-    fn tun_sendv(vecs: *const IOVec, length: usize) -> i32;
+
+    // We eschew all type checking and just pass the iovecs as raw byte pointers.
+    fn tun_recv(vecs: *const u8, length: usize) -> i32;
+    fn tun_send(vecs: *const u8, length: usize) -> i32;
 }
 
 static mut LOCAL_IP: util::IPv4Addr = util::IPv4Addr::new();
@@ -40,33 +42,36 @@ pub fn init() {
     }
 }
 
+fn to_iovec(packet: &buf::NetBuffer) -> Vec<IOVec> {
+    let mut iovec: Vec<IOVec> = Vec::new();
+    for slice in packet.iter(usize::MAX) {
+        iovec.push(IOVec {
+            base: slice.as_ptr(),
+            len: slice.len(),
+        });
+    }
+
+    iovec
+}
+
 pub fn recv_packet() -> buf::NetBuffer {
-    // Use a temporary buffer, which will result in an extra copy, but is
-    // compatible with the NetBuffer API.
-    // XXX Optimize this at some point.
-    let mut readbuf = [0u8; 2048];
-    let result = unsafe { tun_recv(readbuf.as_mut_ptr(), readbuf.len()) };
+    let mut packet = buf::NetBuffer::new();
+    packet.preallocate(2048);
+    let iovec = to_iovec(&packet);
+    let result = unsafe { tun_recv(iovec.as_ptr() as *const u8, iovec.len()) };
     if result <= 0 {
         println!("Error {} reading from TUN interface", result);
         std::process::exit(1);
     }
 
-    let mut packet = buf::NetBuffer::new();
-    packet.append_from_slice(&readbuf[..result as usize]);
+    packet.truncate_to_size(result as usize);
 
     packet
 }
 
 pub fn send_packet(packet: buf::NetBuffer) {
-    let mut writeVecs: Vec<IOVec> = Vec::new();
-    for slice in packet.iter(usize::MAX) {
-        writeVecs.push(IOVec {
-            base: unsafe { slice.as_ptr() },
-            len: slice.len(),
-        });
-    }
-
-    let result = unsafe { tun_sendv(writeVecs.as_ptr() as *const IOVec, writeVecs.len()) };
+    let iovec = to_iovec(&packet);
+    let result = unsafe { tun_send(iovec.as_ptr() as *const u8, iovec.len()) };
     if result <= 0 {
         println!("Error {} writing to TUN interface", result);
         std::process::exit(1);

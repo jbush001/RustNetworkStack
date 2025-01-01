@@ -365,6 +365,60 @@ impl NetBuffer {
             last_frag.next = other.fragments.take();
         }
     }
+
+    /// This function is used by the underlying interface during packet reception.
+    /// It isn't really useful for much else, as that uses some unsafe hackery.
+    pub fn preallocate(&mut self, size: usize) {
+        assert!(self.length == 0);
+        assert!(self.fragments.is_none());
+
+        let mut to_add = size;
+        while to_add > 0 {
+            let mut new_frag = BUFFER_POOL.lock().unwrap().alloc();
+            let frag_size = cmp::min(to_add, FRAGMENT_SIZE);
+            new_frag.data_end = frag_size;
+            to_add -= frag_size;
+            new_frag.next = self.fragments.take();
+            self.fragments = Some(new_frag);
+        }
+
+        self.length = size;
+    }
+
+    pub fn truncate_to_size(&mut self, new_size: usize) {
+        if new_size >= self.length {
+            return;
+        }
+
+        self.length = new_size;
+        let mut remaining = new_size;
+
+        // Skip entire fragments that we will keep
+        let mut last_frag = &mut self.fragments;
+        loop {
+            let length = last_frag.as_ref().unwrap().len();
+            if length >= remaining {
+                break;
+            }
+
+            remaining -= length;
+            last_frag = &mut last_frag.as_mut().unwrap().next;
+        }
+
+        // Truncate the partial fragment
+        let partial = last_frag.as_mut().unwrap();
+        if partial.len() > remaining {
+            partial.data_end = partial.data_start + remaining;
+        }
+
+        // Free any fragments that come after last_frag
+        let mut frag = last_frag.as_mut().unwrap().next.take();
+        while frag.is_some() {
+            let next = frag.as_mut().unwrap().next.take();
+            BUFFER_POOL.lock().unwrap().free(frag.unwrap());
+            frag = next;
+        }
+    }
 }
 
 impl<'a> Iterator for BufferIterator<'a> {
@@ -901,4 +955,65 @@ mod tests {
         std::mem::drop(buf);
         assert!(no_leaks());
     }
+
+    #[flaky]
+    #[test]
+    fn test_preallocate() {
+        let mut buf = super::NetBuffer::new();
+        buf.preallocate(1000);
+        assert_eq!(buf.len(), 1000);
+
+        // Ensure slices add up.
+        let mut tot_length = 0;
+        for slice in buf.iter(1000) {
+            tot_length += slice.len();
+        }
+
+        assert_eq!(tot_length, 1000);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
+    fn test_truncate_to_size1() {
+        let mut buf = super::NetBuffer::new();
+
+        buf.append_from_slice(&[1; 1500]);
+        assert_eq!(buf.len(), 1500);
+
+        // This will change the size of the last buffer
+        buf.truncate_to_size(750);
+        assert_eq!(buf.len(), 750);
+
+        // Check contents
+        let mut dest = [0; 750];
+        buf.copy_to_slice(&mut dest);
+        assert_eq!(dest, [1; 750]);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
+    fn test_truncate_to_size() {
+        let mut buf = super::NetBuffer::new();
+        buf.append_from_slice(&[1; 1500]);
+        assert_eq!(buf.len(), 1500);
+
+        // Truncate at a buffer boundary, which is an edge case.
+        buf.truncate_to_size(1024);
+        assert_eq!(buf.len(), 1024);
+
+        // Check contents
+        let mut dest = [0; 1024];
+        buf.copy_to_slice(&mut dest);
+        assert_eq!(dest, [1; 1024]);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
+    }
+
 }

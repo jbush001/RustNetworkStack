@@ -15,7 +15,7 @@
 //
 
 use lazy_static::lazy_static;
-use std::sync::{Mutex, Once};
+use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -113,7 +113,7 @@ pub fn init() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, Once};
 
     static START_TIMER_THREAD: Once = Once::new();
 

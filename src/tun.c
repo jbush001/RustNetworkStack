@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 static int tun_fd;
@@ -70,12 +71,10 @@ int tun_init() {
     return 0;
 }
 
-int tun_recv(void *buffer, unsigned int length) {
-    return read(tun_fd, buffer, length);
+int tun_recv(struct iovec *vecs, size_t count) {
+    return readv(tun_fd, vecs, count);
 }
 
-#define MAX_VECS 32
-
-int tun_sendv(struct iovec *vecs, size_t count) {
+int tun_send(struct iovec *vecs, size_t count) {
     return writev(tun_fd, vecs, count);
 }
