@@ -42,7 +42,10 @@ lazy_static! {
 }
 
 fn current_time_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }
 
 /// Returns a timer ID, which can be passed to cancel_timer to disable it.
@@ -51,12 +54,11 @@ fn current_time_ms() -> u64 {
 /// The timeout is relative to the current time.
 pub fn set_timer<F>(timeout_ms: u32, closure: F) -> i32
 where
-    F: FnOnce() + Send + Sync + 'static
+    F: FnOnce() + Send + Sync + 'static,
 {
     let mut list = PENDING_TIMERS.lock().unwrap();
 
-    let id = (NEXT_TIMER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        & 0x7fffffff) as i32;
+    let id = (NEXT_TIMER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) & 0x7fffffff) as i32;
     list.push(Timer {
         absolute_timeout_ms: current_time_ms() + timeout_ms as u64,
         closure: Some(Box::new(closure)),

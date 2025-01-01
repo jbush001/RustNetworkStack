@@ -62,7 +62,7 @@ fn to_iovec(packet: &buf::NetBuffer, vec: &mut [IOVec]) -> usize {
 pub fn recv_packet() -> buf::NetBuffer {
     const MRU: usize = 2048;
     let mut packet = buf::NetBuffer::new_prealloc(MRU);
-    let mut iovec: [IOVec; MAX_VECS] = [IOVec{
+    let mut iovec: [IOVec; MAX_VECS] = [IOVec {
         base: 0 as *const u8,
         len: 0,
     }; MAX_VECS];
@@ -79,7 +79,7 @@ pub fn recv_packet() -> buf::NetBuffer {
 }
 
 pub fn send_packet(packet: buf::NetBuffer) {
-    let mut iovec: [IOVec; MAX_VECS] = [IOVec{
+    let mut iovec: [IOVec; MAX_VECS] = [IOVec {
         base: 0 as *const u8,
         len: 0,
     }; MAX_VECS];

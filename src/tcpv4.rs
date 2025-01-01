@@ -97,16 +97,21 @@ fn get_ephemeral_port(remote_ip: util::IPv4Addr, remote_port: u16) -> u16 {
     loop {
         const RANGE: u16 = (0xffff - EPHEMERAL_PORT_BASE) as u16;
         let port = EPHEMERAL_PORT_BASE + (rand::random::<u16>() % RANGE);
-        if !PORT_MAP.lock().unwrap().contains_key(&(remote_ip, remote_port, port)) {
+        if !PORT_MAP
+            .lock()
+            .unwrap()
+            .contains_key(&(remote_ip, remote_port, port))
+        {
             return port;
         }
     }
 }
 
-pub fn tcp_open(remote_ip: util::IPv4Addr, remote_port: u16)
-    -> Result<Arc<Mutex<TCPSocket>>, &'static str>
-{
-    let local_port =  get_ephemeral_port(remote_ip, remote_port);
+pub fn tcp_open(
+    remote_ip: util::IPv4Addr,
+    remote_port: u16,
+) -> Result<Arc<Mutex<TCPSocket>>, &'static str> {
+    let local_port = get_ephemeral_port(remote_ip, remote_port);
     let handle = Arc::new(Mutex::new(TCPSocket::new(
         remote_ip,
         remote_port,
@@ -271,18 +276,25 @@ impl TCPSocket {
         // We need to acknowledge the FIN packet, which consumes a sequence
         // number. But we should only do this if we have received all other outstanding
         // data.
-        let ack_seq = self.reassembler.get_next_expect() +
-            if matches!(self.state,
-                TCPState::FinWait1 | TCPState::FinWait2 | TCPState::Closing | TCPState::CloseWait)
-                && self.highest_seq_received == self.reassembler.get_next_expect() {
+        let ack_seq = self.reassembler.get_next_expect()
+            + if matches!(
+                self.state,
+                TCPState::FinWait1 | TCPState::FinWait2 | TCPState::Closing | TCPState::CloseWait
+            ) && self.highest_seq_received == self.reassembler.get_next_expect()
+            {
                 1
             } else {
                 0
             };
 
-        println!("{}: send_packet: flags {} seq {} ack {} window {}",
-            self.to_string(), flags_to_str(flags),
-            self.next_transmit_seq, ack_seq, receive_window);
+        println!(
+            "{}: send_packet: flags {} seq {} ack {} window {}",
+            self.to_string(),
+            flags_to_str(flags),
+            self.next_transmit_seq,
+            ack_seq,
+            receive_window
+        );
 
         tcp_output(
             packet,
@@ -297,8 +309,12 @@ impl TCPSocket {
     }
 
     fn set_state(&mut self, new_state: TCPState) {
-        println!("{}: Change state from {:?} to {:?}",
-            self.to_string(), self.state, new_state);
+        println!(
+            "{}: Change state from {:?} to {:?}",
+            self.to_string(),
+            self.state,
+            new_state
+        );
         self.state = new_state;
         self.request_retry_count = 0;
     }
@@ -306,7 +322,10 @@ impl TCPSocket {
 
 impl ToString for TCPSocket {
     fn to_string(&self) -> String {
-        format!("localhost:{} {}:{}", self.local_port, self.remote_ip, self.remote_port)
+        format!(
+            "localhost:{} {}:{}",
+            self.local_port, self.remote_ip, self.remote_port
+        )
     }
 }
 
@@ -407,12 +426,20 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         return;
     }
 
-    let sockref = pm_entry.expect("just checked if pm_entry is none above").clone();
+    let sockref = pm_entry
+        .expect("just checked if pm_entry is none above")
+        .clone();
     let mut socket = sockref.lock().unwrap();
 
-    println!("{}: tcp_input: flags {} seq {} ack {} window {} ({} bytes of data)",
-        socket.to_string(), flags_to_str(flags), seq_num, ack_num, remote_window_size,
-        packet.len());
+    println!(
+        "{}: tcp_input: flags {} seq {} ack {} window {} ({} bytes of data)",
+        socket.to_string(),
+        flags_to_str(flags),
+        seq_num,
+        ack_num,
+        remote_window_size,
+        packet.len()
+    );
     if flags & FLAG_ACK != 0 {
         let expected = if matches!(socket.state, TCPState::Established) {
             socket.next_transmit_seq
@@ -421,8 +448,12 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         };
 
         if ack_num != expected {
-            println!("{}: Unexpected ack {} expected {}", socket.to_string(),
-                ack_num, expected);
+            println!(
+                "{}: Unexpected ack {} expected {}",
+                socket.to_string(),
+                ack_num,
+                expected
+            );
         }
     }
 
@@ -441,7 +472,9 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     if packet.len() > 0 {
         // Handle received data
         socket.highest_seq_received = std::cmp::max(
-            socket.highest_seq_received, seq_num.wrapping_add(packet.len() as u32));
+            socket.highest_seq_received,
+            seq_num.wrapping_add(packet.len() as u32),
+        );
         let got = socket.reassembler.add_packet(packet, seq_num);
         if got.is_some() {
             socket.receive_queue.append_buffer(got.unwrap());
@@ -453,7 +486,8 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
             if socket.num_delayed_acks >= MAX_DELAYED_ACKS || (flags & FLAG_FIN) != 0 {
                 println!(
                     "{}: Sending immediate ack, num_delayed_acks={}",
-                    socket.to_string(), socket.num_delayed_acks
+                    socket.to_string(),
+                    socket.num_delayed_acks
                 );
                 socket.num_delayed_acks = 0;
                 if socket.delayed_ack_timer_id != -1 {
@@ -477,8 +511,11 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                     socket.num_delayed_acks = 0;
                 });
             } else {
-                println!("{}: Deferring ack, count is now {}", socket.to_string(),
-                    socket.num_delayed_acks);
+                println!(
+                    "{}: Deferring ack, count is now {}",
+                    socket.to_string(),
+                    socket.num_delayed_acks
+                );
             }
         } else {
             if socket.delayed_ack_timer_id != -1 {
@@ -525,7 +562,9 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                     socket.retransmit_queue.trim_head(trim);
                     println!(
                         "{}: Trimming {} acked bytes from retransmit queue, size is now {}",
-                        socket.to_string(), trim, socket.retransmit_queue.len()
+                        socket.to_string(),
+                        trim,
+                        socket.retransmit_queue.len()
                     );
 
                     if socket.retransmit_queue.len() == 0 {
@@ -545,7 +584,8 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         }
 
         TCPState::FinWait1 => {
-            if (flags & FLAG_ACK != 0) && (flags & FLAG_FIN != 0)
+            if (flags & FLAG_ACK != 0)
+                && (flags & FLAG_FIN != 0)
                 && ack_num == socket.next_transmit_seq.wrapping_add(1)
             {
                 socket.set_state(TCPState::TimeWait);
@@ -557,7 +597,8 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                 socket.set_state(TCPState::Closing);
                 socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
                 set_response_timer(&mut socket, sockref.clone());
-            } else if (flags & FLAG_ACK) != 0 && ack_num == socket.next_transmit_seq.wrapping_add(1) {
+            } else if (flags & FLAG_ACK) != 0 && ack_num == socket.next_transmit_seq.wrapping_add(1)
+            {
                 socket.set_state(TCPState::FinWait2);
             }
         }
@@ -585,7 +626,11 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         }
 
         _ => {
-            println!("{}: Received packet in state: {:?}", socket.to_string(), socket.state);
+            println!(
+                "{}: Received packet in state: {:?}",
+                socket.to_string(),
+                socket.state
+            );
         }
     }
 }
@@ -645,21 +690,28 @@ fn response_timeout(sockref: Arc<Mutex<TCPSocket>>) {
     let mut socket = sockref.lock().unwrap();
 
     if socket.request_retry_count >= MAX_RETRIES {
-        println!("{}: Too many response timeouts in state {:?}, closing",
-            socket.to_string(),socket.state);
+        println!(
+            "{}: Too many response timeouts in state {:?}, closing",
+            socket.to_string(),
+            socket.state
+        );
         socket.set_state(TCPState::Closed);
         RECV_WAIT.notify_all();
         return;
     }
 
-    println!("{}: Response timeout state {:?}", socket.to_string(), socket.state);
+    println!(
+        "{}: Response timeout state {:?}",
+        socket.to_string(),
+        socket.state
+    );
     match socket.state {
         TCPState::Closed | TCPState::Established => {
             // This can occur if the timer fires as the connection state
             // transitions.
         }
 
-        TCPState::SynSent =>  {
+        TCPState::SynSent => {
             socket.send_packet(buf::NetBuffer::new(), FLAG_SYN);
             set_response_timer(&mut socket, sockref.clone());
         }
@@ -676,7 +728,11 @@ fn response_timeout(sockref: Arc<Mutex<TCPSocket>>) {
 
         _ => {
             // This would indicate a bug: we set a timer where we shoudn't have.
-            panic!("{}: unexpected state in response_timeout: {:?}", socket.to_string(), socket.state);
+            panic!(
+                "{}: unexpected state in response_timeout: {:?}",
+                socket.to_string(),
+                socket.state
+            );
         }
     }
 
@@ -690,7 +746,10 @@ fn time_wait_timeout(handle: Arc<Mutex<TCPSocket>>) {
     let remote_port = socket.remote_port;
     let local_port = socket.local_port;
     drop(socket); // Unlock to avoid deadlock
-    PORT_MAP.lock().unwrap().remove(&(remote_ip, remote_port, local_port));
+    PORT_MAP
+        .lock()
+        .unwrap()
+        .remove(&(remote_ip, remote_port, local_port));
 }
 
 #[cfg(test)]
@@ -969,4 +1028,3 @@ mod tests {
         assert_eq!(reassembler.out_of_order.len(), 1);
     }
 }
-

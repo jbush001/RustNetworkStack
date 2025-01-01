@@ -44,7 +44,9 @@ fn test_udp_echo() {
         let received = udpv4::udp_recv(&mut socket, &mut data, &mut source_addr, &mut source_port);
         println!(
             "Received UDP packet from {}:{} ({} bytes)",
-            source_addr.to_string(), source_port, received
+            source_addr.to_string(),
+            source_port,
+            received
         );
 
         util::print_binary(&data[..received as usize]);
@@ -52,7 +54,8 @@ fn test_udp_echo() {
             &mut socket,
             source_addr,
             source_port,
-            &data[..received as usize]);
+            &data[..received as usize],
+        );
         buf::print_alloc_stats();
     }
 }
@@ -84,7 +87,10 @@ fn test_tcp_connect() {
             break;
         }
         if received > 0 {
-            print!("{}", std::str::from_utf8(&data[..received as usize]).unwrap());
+            print!(
+                "{}",
+                std::str::from_utf8(&data[..received as usize]).unwrap()
+            );
         }
     }
 
@@ -107,7 +113,6 @@ fn main() {
     });
 
     test_tcp_connect();
-
 
     std::thread::park();
 }

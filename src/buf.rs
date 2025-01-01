@@ -1,5 +1,5 @@
 //
-// Copyright 2024 Jeff Bush
+// Copyright 2024-2025 Jeff Bush
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,6 +13,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
+
+use lazy_static::lazy_static;
+use std::cmp;
+use std::sync::Mutex;
 
 ///
 /// This class implements an efficient, flexible container for unstructured
@@ -33,10 +37,6 @@
 ///   but would limit the maximum size of buffer (potentially workable for
 ///   many protocols).
 ///
-
-use std::cmp;
-use std::sync::Mutex;
-use lazy_static::lazy_static;
 
 const FRAGMENT_SIZE: usize = 512;
 type FragPointer = Option<Box<BufferFragment>>;
@@ -101,8 +101,10 @@ impl BufferPool {
 
         self.total_bufs += POOL_GROW_SIZE;
         self.free_bufs += POOL_GROW_SIZE;
-        println!("Grow pool, g_free_bufs={}, g_pool_size={}",
-            self.free_bufs, self.total_bufs);
+        println!(
+            "Grow pool, g_free_bufs={}, g_pool_size={}",
+            self.free_bufs, self.total_bufs
+        );
     }
 
     /// Allocate a new fragment from the pool.
@@ -143,8 +145,16 @@ impl BufferPool {
 
 pub fn print_alloc_stats() {
     let pool = BUFFER_POOL.lock().unwrap();
-    println!("Pool size: {} ({}k)", pool.total_bufs, pool.total_bufs * FRAGMENT_SIZE / 1024);
-    println!("Free buffers: {} ({}k)", pool.free_bufs, pool.free_bufs * FRAGMENT_SIZE / 1024);
+    println!(
+        "Pool size: {} ({}k)",
+        pool.total_bufs,
+        pool.total_bufs * FRAGMENT_SIZE / 1024
+    );
+    println!(
+        "Free buffers: {} ({}k)",
+        pool.free_bufs,
+        pool.free_bufs * FRAGMENT_SIZE / 1024
+    );
     println!("Total allocs: {}", pool.total_allocs);
 }
 
@@ -893,7 +903,10 @@ mod tests {
         // Destination slice is larger than buffer
         let mut dest = [0; 20];
         let copied = buf.copy_to_slice(&mut dest);
-        assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            dest,
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 0, 0]
+        );
         assert_eq!(copied, 15);
         assert_eq!(buf.len(), 15);
 
