@@ -55,8 +55,8 @@ fn to_iovec(packet: &buf::NetBuffer) -> Vec<IOVec> {
 }
 
 pub fn recv_packet() -> buf::NetBuffer {
-    let mut packet = buf::NetBuffer::new();
-    packet.preallocate(2048);
+    const MRU: usize = 2048;
+    let mut packet = buf::NetBuffer::new_prealloc(MRU);
     let iovec = to_iovec(&packet);
     let result = unsafe { tun_recv(iovec.as_ptr() as *const u8, iovec.len()) };
     if result <= 0 {
@@ -64,7 +64,7 @@ pub fn recv_packet() -> buf::NetBuffer {
         std::process::exit(1);
     }
 
-    packet.truncate_to_size(result as usize);
+    packet.trim_tail(packet.len() - result as usize);
 
     packet
 }

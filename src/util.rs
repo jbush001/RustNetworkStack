@@ -138,6 +138,30 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_packet_ones_comp() {
+        let mut buffer = crate::buf::NetBuffer::new();
+        buffer.append_from_slice(&[0x12, 0x34]);
+        assert_eq!(super::compute_buffer_ones_comp(0, &buffer), 0x1234);
+    }
+
+    #[test]
+    fn test_compute_packet_ones_comp_multiple_fragments() {
+        let mut buffer = crate::buf::NetBuffer::new();
+        for _ in 0..512 {
+            buffer.append_from_slice(&[0x12, 0x34]);
+        }
+
+        // 512 * 0x1234 = 0x246800, 0x6800 + 0x0024 = 0x6824
+
+        assert_eq!(super::compute_buffer_ones_comp(0, &buffer), 0x6824);
+    }
+
+    #[test]
+    fn test_compute_ones_comp_odd_length() {
+        assert_eq!(super::compute_ones_comp(0, &[0x12, 0x34, 0x56]), 0x128a);
+    }
+
+    #[test]
     fn test_get_be16() {
         assert_eq!(super::get_be16(&[0x00, 0x00]), 0x0000);
         assert_eq!(super::get_be16(&[0x35, 0xa5]), 0x35a5);
@@ -199,10 +223,11 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_packet_checksum() {
-        let mut buffer = crate::buf::NetBuffer::new();
-        buffer.append_from_slice(&[0x12, 0x34]);
-        assert_eq!(super::compute_buffer_ones_comp(0, &buffer), 0x1234);
+    fn test_copy_to() {
+        let ip = super::IPv4Addr::new_from(&[192, 168, 1, 1]);
+        let mut buffer = [0u8; 4];
+        ip.copy_to(&mut buffer);
+        assert_eq!(buffer, [192, 168, 1, 1]);
     }
 
     #[test]
