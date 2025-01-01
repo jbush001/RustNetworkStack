@@ -182,6 +182,8 @@ impl NetBuffer {
         }
     }
 
+    /// This function is used by the underlying interface during packet
+    /// reception. It isn't really useful for much else.
     pub fn new_prealloc(length: usize) -> NetBuffer {
         let mut buf = NetBuffer {
             fragments: None,
@@ -476,128 +478,10 @@ mod tests {
 
     #[flaky]
     #[test]
-    fn test_append_from_slice() {
-        let mut buf = super::NetBuffer::new();
-        buf.append_from_slice(&[1, 2, 3, 4, 5]);
-        assert_eq!(buf.len(), 5);
-        buf.append_from_slice(&[6, 7, 8, 9, 10]);
-        assert_eq!(buf.len(), 10);
-        buf.append_from_slice(&[11, 12, 13, 14, 15]);
-        assert_eq!(buf.len(), 15);
-
-        // Append an empty slice and ensure the length doesn't change.
-        buf.append_from_slice(&[]);
-        assert_eq!(buf.len(), 15);
-
-        // Check contents
-        let mut dest = [0; 15];
-        buf.copy_to_slice(&mut dest);
-        assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
-    }
-
-    #[flaky]
-    #[test]
-    fn test_copy_to_slice1() {
-        let mut buf = super::NetBuffer::new();
-        buf.append_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-
-        // Destination slice is larger than buffer
-        let mut dest = [0; 20];
-        let copied = buf.copy_to_slice(&mut dest);
-        assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 0, 0]);
-        assert_eq!(copied, 15);
-        assert_eq!(buf.len(), 15);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
-    }
-
-    #[flaky]
-    #[test]
-    fn test_copy_to_slice2() {
-        let mut buf = super::NetBuffer::new();
-        buf.append_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-
-        // Destination slice is smaller than buffer
-        let mut dest = [0; 10];
-        let copied = buf.copy_to_slice(&mut dest);
-        assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-        assert_eq!(copied, 10);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
-    }
-
-    #[flaky]
-    #[test]
-    fn test_copy_empty_buffer_to_slice() {
-        let buf = super::NetBuffer::new();
-        let mut dest = [0; 10];
-        let copied = buf.copy_to_slice(&mut dest);
-        assert_eq!(copied, 0);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
-    }
-
-    #[flaky]
-    #[test]
-    fn test_grow_buffer() {
-        let mut buf = super::NetBuffer::new();
-
-        // Fill up the first frag
-        let slice1 = [1; 500];
-        buf.append_from_slice(&[1; 500]);
-        assert_eq!(buf.len(), 500);
-
-        // Add another frag. This will first fill the remainder of the
-        // last frag, then add several new ones.
-        let slice2 = [2; 1500];
-        buf.append_from_slice(&[2; 1500]);
-        assert_eq!(buf.len(), 2000);
-
-        // Check the contents
-        let mut dest = [0; 2000];
-        buf.copy_to_slice(&mut dest);
-        assert_eq!(dest[..500], slice1);
-        assert_eq!(dest[500..], slice2);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
-    }
-
-    #[flaky]
-    #[test]
-    fn test_alloc_header() {
-        let mut buf = super::NetBuffer::new();
-        buf.append_from_slice(&[1; 100]);
-        assert!(buf.len() == 100);
-
-        // This will add a new fragment
-        buf.alloc_header(20);
-        assert_eq!(buf.len(), 120);
-        {
-            let header = buf.header_mut();
-            header[0] = 1;
-            header[19] = 2;
-        }
-        buf.alloc_header(20);
-        assert_eq!(buf.len(), 140);
-        {
-            let header = buf.header_mut();
-            header[0] = 3;
-            header[19] = 4;
-        }
-
-        let header = buf.header();
-        assert_eq!(header[0], 3);
-        assert_eq!(header[19], 4);
-        assert_eq!(header[20], 1);
-        assert_eq!(header[39], 2);
-
+    fn test_new_prealloc_zero() {
+        // Doesn't make a lot of sense, but ensure it works.
+        let buf = super::NetBuffer::new_prealloc(0);
+        assert_eq!(buf.len(), 0);
         std::mem::drop(buf);
         assert!(no_leaks());
     }
@@ -646,93 +530,12 @@ mod tests {
 
     #[flaky]
     #[test]
-    fn test_iter3() {
+    fn test_iter_empty() {
         // Create iterator on empty buffer
         let buf = super::NetBuffer::new();
         let mut iter = buf.iter(usize::MAX);
         assert!(iter.next().is_none());
         std::mem::drop(buf);
-        assert!(no_leaks());
-    }
-
-    #[flaky]
-    #[test]
-    fn test_append_buffer() {
-        let mut buf1 = super::NetBuffer::new();
-        buf1.append_from_slice(&[1; 512]);
-        buf1.append_from_slice(&[2; 512]);
-        buf1.append_from_slice(&[3; 512]);
-        assert!(buf1.len() == 1536);
-
-        let mut buf2 = super::NetBuffer::new();
-        buf2.append_from_slice(&[4; 512]);
-        buf2.append_from_slice(&[5; 512]);
-        buf2.append_from_slice(&[6; 512]);
-        assert!(buf1.len() == 1536);
-
-        buf1.append_buffer(buf2);
-        assert!(buf1.len() == 3072);
-
-        // Check contents
-        let mut dest = [0; 1536];
-        buf1.copy_to_slice(&mut dest);
-        assert_eq!(dest[0..512], [1; 512]);
-        assert_eq!(dest[512..1024], [2; 512]);
-        assert_eq!(dest[1024..1536], [3; 512]);
-        assert_eq!(buf1.len(), 3072);
-
-        std::mem::drop(buf1);
-        assert!(no_leaks());
-    }
-
-    #[flaky]
-    #[test]
-    fn test_append_empty_buffer() {
-        let mut buf1 = super::NetBuffer::new();
-        buf1.append_from_slice(&[1, 2, 3, 4, 5]);
-        assert_eq!(buf1.len(), 5);
-
-        let buf2 = super::NetBuffer::new();
-        buf1.append_buffer(buf2);
-        assert_eq!(buf1.len(), 5);
-
-        let mut dest = [0; 5];
-        buf1.copy_to_slice(&mut dest);
-        assert_eq!(dest, [1, 2, 3, 4, 5]);
-
-        std::mem::drop(buf1);
-        assert!(no_leaks());
-    }
-
-    #[flaky]
-    #[test]
-    fn test_append_from_buffer() {
-        let mut buf1 = super::NetBuffer::new();
-        buf1.append_from_slice(&[1; 512]);
-        buf1.append_from_slice(&[2; 512]);
-        buf1.append_from_slice(&[3; 512]);
-        assert_eq!(buf1.len(), 1536);
-
-        let mut buf2 = super::NetBuffer::new();
-        buf2.append_from_slice(&[4; 512]);
-        buf2.append_from_slice(&[5; 512]);
-        buf2.append_from_slice(&[6; 512]);
-        buf1.append_from_buffer(&buf2, 1000);
-        assert_eq!(buf1.len(), 2536);
-
-        // Check contents
-        let mut dest = [0; 3000];
-        buf1.copy_to_slice(&mut dest);
-        assert_eq!(dest[0..512], [1; 512]);
-        assert_eq!(dest[512..1024], [2; 512]);
-        assert_eq!(dest[1024..1536], [3; 512]);
-        assert_eq!(dest[1536..2048], [4; 512]);
-        assert_eq!(dest[2048..2536], [5; 488]);
-
-        assert_eq!(buf1.len(), 2536);
-
-        std::mem::drop(buf1);
-        std::mem::drop(buf2);
         assert!(no_leaks());
     }
 
@@ -746,6 +549,13 @@ mod tests {
         assert_eq!(header.len(), 20);
         assert_eq!(header[0], 0);
         assert_eq!(header[19], 0);
+    }
+
+    #[should_panic]
+    #[test]
+    fn test_header_empty() {
+        let buf = super::NetBuffer::new();
+        let _header = buf.header();
     }
 
     #[flaky]
@@ -764,6 +574,55 @@ mod tests {
         assert_eq!(dest[0], 0xcc);
         assert_eq!(dest[19], 0x55);
         assert_eq!(dest[20], 1);
+    }
+
+    #[should_panic]
+    #[test]
+    fn test_header_mut_empty() {
+        let mut buf = super::NetBuffer::new();
+        let _header = buf.header_mut();
+    }
+
+    #[flaky]
+    #[test]
+    fn test_alloc_header() {
+        let mut buf = super::NetBuffer::new();
+        buf.append_from_slice(&[1; 100]);
+        assert!(buf.len() == 100);
+
+        // This will add a new fragment
+        buf.alloc_header(20);
+        assert_eq!(buf.len(), 120);
+        {
+            let header = buf.header_mut();
+            header[0] = 1;
+            header[19] = 2;
+        }
+
+        // This will extend the first fragment
+        buf.alloc_header(20);
+        assert_eq!(buf.len(), 140);
+        {
+            let header = buf.header_mut();
+            header[0] = 3;
+            header[19] = 4;
+        }
+
+        let header = buf.header();
+        assert_eq!(header[0], 3);
+        assert_eq!(header[19], 4);
+        assert_eq!(header[20], 1);
+        assert_eq!(header[39], 2);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
+    }
+
+    #[should_panic]
+    #[test]
+    fn test_alloc_header_too_large() {
+        let mut buf = super::NetBuffer::new();
+        buf.alloc_header(1000);
     }
 
     #[flaky]
@@ -886,7 +745,7 @@ mod tests {
 
     #[flaky]
     #[test]
-    fn test_trim_tail_tail2() {
+    fn test_trim_tail2() {
         // Remove an entire fragment and truncate part of the
         // former.
         let mut buf = super::NetBuffer::new();
@@ -906,7 +765,7 @@ mod tests {
 
     #[flaky]
     #[test]
-    fn test_trim_tail_entire_buffer() {
+    fn test_trim_entire_buffer() {
         // Trim removes all data in buffer.
         let mut buf = super::NetBuffer::new();
         buf.append_from_slice(&[1, 2, 3, 4, 5]);
@@ -946,6 +805,70 @@ mod tests {
 
     #[flaky]
     #[test]
+    fn test_append_from_slice() {
+        let mut buf = super::NetBuffer::new();
+        buf.append_from_slice(&[1, 2, 3, 4, 5]);
+        assert_eq!(buf.len(), 5);
+        buf.append_from_slice(&[6, 7, 8, 9, 10]);
+        assert_eq!(buf.len(), 10);
+        buf.append_from_slice(&[11, 12, 13, 14, 15]);
+        assert_eq!(buf.len(), 15);
+
+        // Append an empty slice and ensure the length doesn't change.
+        buf.append_from_slice(&[]);
+        assert_eq!(buf.len(), 15);
+
+        // Check contents
+        let mut dest = [0; 15];
+        buf.copy_to_slice(&mut dest);
+        assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
+    fn test_append_from_slice_zero() {
+        let mut buf = super::NetBuffer::new();
+        buf.append_from_slice(&[1, 2, 3, 4]);
+        assert_eq!(buf.len(), 4);
+        buf.append_from_slice(&[]);
+        assert_eq!(buf.len(), 4);
+
+        // Free buffers
+        std::mem::drop(buf);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
+    fn test_grow_buffer() {
+        let mut buf = super::NetBuffer::new();
+
+        // Fill up the first frag
+        let slice1 = [1; 500];
+        buf.append_from_slice(&[1; 500]);
+        assert_eq!(buf.len(), 500);
+
+        // Add another frag. This will first fill the remainder of the
+        // last frag, then add several new ones.
+        let slice2 = [2; 1500];
+        buf.append_from_slice(&[2; 1500]);
+        assert_eq!(buf.len(), 2000);
+
+        // Check the contents
+        let mut dest = [0; 2000];
+        buf.copy_to_slice(&mut dest);
+        assert_eq!(dest[..500], slice1);
+        assert_eq!(dest[500..], slice2);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
     fn test_grow_pool() {
         // Grow the underlying pool multiple times, then return it.
         // (regression test for an issue in original implementation)
@@ -958,6 +881,163 @@ mod tests {
 
         // Free buffers
         std::mem::drop(buflist);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
+    fn test_copy_to_slice1() {
+        let mut buf = super::NetBuffer::new();
+        buf.append_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+
+        // Destination slice is larger than buffer
+        let mut dest = [0; 20];
+        let copied = buf.copy_to_slice(&mut dest);
+        assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 0, 0]);
+        assert_eq!(copied, 15);
+        assert_eq!(buf.len(), 15);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
+    fn test_copy_to_slice2() {
+        let mut buf = super::NetBuffer::new();
+        buf.append_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+
+        // Destination slice is smaller than buffer
+        let mut dest = [0; 10];
+        let copied = buf.copy_to_slice(&mut dest);
+        assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(copied, 10);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
+    fn test_copy_empty_buffer_to_slice() {
+        let buf = super::NetBuffer::new();
+        let mut dest = [0; 10];
+        let copied = buf.copy_to_slice(&mut dest);
+        assert_eq!(copied, 0);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
+    fn test_append_from_buffer() {
+        let mut buf1 = super::NetBuffer::new();
+        buf1.append_from_slice(&[1; 512]);
+        buf1.append_from_slice(&[2; 512]);
+        buf1.append_from_slice(&[3; 512]);
+        assert_eq!(buf1.len(), 1536);
+
+        let mut buf2 = super::NetBuffer::new();
+        buf2.append_from_slice(&[4; 512]);
+        buf2.append_from_slice(&[5; 512]);
+        buf2.append_from_slice(&[6; 512]);
+        buf1.append_from_buffer(&buf2, 1000);
+        assert_eq!(buf1.len(), 2536);
+
+        // Check contents
+        let mut dest = [0; 3000];
+        buf1.copy_to_slice(&mut dest);
+        assert_eq!(dest[0..512], [1; 512]);
+        assert_eq!(dest[512..1024], [2; 512]);
+        assert_eq!(dest[1024..1536], [3; 512]);
+        assert_eq!(dest[1536..2048], [4; 512]);
+        assert_eq!(dest[2048..2536], [5; 488]);
+
+        assert_eq!(buf1.len(), 2536);
+
+        std::mem::drop(buf1);
+        std::mem::drop(buf2);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
+    fn test_append_buffer1() {
+        // Buffer being appended to is non empty
+        let mut buf1 = super::NetBuffer::new();
+        buf1.append_from_slice(&[1; 512]);
+        buf1.append_from_slice(&[2; 512]);
+        buf1.append_from_slice(&[3; 512]);
+        assert!(buf1.len() == 1536);
+
+        let mut buf2 = super::NetBuffer::new();
+        buf2.append_from_slice(&[4; 512]);
+        buf2.append_from_slice(&[5; 512]);
+        buf2.append_from_slice(&[6; 512]);
+        assert!(buf1.len() == 1536);
+
+        buf1.append_buffer(buf2);
+        assert!(buf1.len() == 3072);
+
+        // Check contents
+        let mut dest = [0; 1536];
+        buf1.copy_to_slice(&mut dest);
+        assert_eq!(dest[0..512], [1; 512]);
+        assert_eq!(dest[512..1024], [2; 512]);
+        assert_eq!(dest[1024..1536], [3; 512]);
+        assert_eq!(buf1.len(), 3072);
+
+        std::mem::drop(buf1);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
+    fn test_append_to_empty() {
+        // Buffer being appended to is empty
+        let mut buf1 = super::NetBuffer::new();
+        let mut buf2 = super::NetBuffer::new();
+        buf2.append_from_slice(&[1; 512]);
+        buf1.append_buffer(buf2);
+        assert!(buf1.len() == 512);
+        let mut dest = [0; 512];
+        buf1.copy_to_slice(&mut dest);
+        assert_eq!(dest[0..512], [1; 512]);
+
+        std::mem::drop(buf1);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
+    fn test_append_empty_buffer() {
+        // Buffer being appended is empty
+        let mut buf1 = super::NetBuffer::new();
+        buf1.append_from_slice(&[1, 2, 3, 4, 5]);
+        assert_eq!(buf1.len(), 5);
+
+        let buf2 = super::NetBuffer::new();
+        buf1.append_buffer(buf2);
+        assert_eq!(buf1.len(), 5);
+
+        let mut dest = [0; 5];
+        buf1.copy_to_slice(&mut dest);
+        assert_eq!(dest, [1, 2, 3, 4, 5]);
+
+        std::mem::drop(buf1);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
+    fn test_append_empty_to_empty() {
+        let mut buf1 = super::NetBuffer::new();
+        let buf2 = super::NetBuffer::new();
+        buf1.append_buffer(buf2);
+        assert_eq!(buf1.len(), 0);
+
+        std::mem::drop(buf1);
         assert!(no_leaks());
     }
 
