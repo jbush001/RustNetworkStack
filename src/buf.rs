@@ -460,6 +460,21 @@ impl<'a> Iterator for BufferIterator<'a> {
 mod tests {
     use mark_flaky_tests::*;
 
+    // Walk through the buffer to ensure it is correctly formed.
+    fn validate_buffer(buf: &super::NetBuffer) {
+        let mut ptr = &buf.fragments;
+        let mut actual_length = 0;
+        while ptr.is_some() {
+            let frag = ptr.as_ref().unwrap();
+            assert!(frag.data_start <= frag.data_end);
+            assert!(frag.data_end <= super::FRAGMENT_SIZE);
+            actual_length += frag.data_end - frag.data_start;
+            ptr = &frag.next;
+        }
+
+        assert_eq!(actual_length, buf.len());
+    }
+
     /// For reasons that are still unclear to me, these tests are sometimes
     /// flakey and fail on the no_leaks check. There is no threading in this
     /// module, so it presumably isn't timing related.
@@ -473,14 +488,7 @@ mod tests {
     fn test_new_prealloc() {
         let buf = super::NetBuffer::new_prealloc(1000);
         assert_eq!(buf.len(), 1000);
-
-        // Ensure slices add up.
-        let mut tot_length = 0;
-        for slice in buf.iter(1000) {
-            tot_length += slice.len();
-        }
-
-        assert_eq!(tot_length, 1000);
+        validate_buffer(&buf);
 
         std::mem::drop(buf);
         assert!(no_leaks());
@@ -492,6 +500,7 @@ mod tests {
         // Doesn't make a lot of sense, but ensure it works.
         let buf = super::NetBuffer::new_prealloc(0);
         assert_eq!(buf.len(), 0);
+        validate_buffer(&buf);
         std::mem::drop(buf);
         assert!(no_leaks());
     }
@@ -599,10 +608,12 @@ mod tests {
         let mut buf = super::NetBuffer::new();
         buf.append_from_slice(&[1; 100]);
         assert!(buf.len() == 100);
+        validate_buffer(&buf);
 
         // This will add a new fragment
         buf.alloc_header(20);
         assert_eq!(buf.len(), 120);
+        validate_buffer(&buf);
         {
             let header = buf.header_mut();
             header[0] = 1;
@@ -612,6 +623,7 @@ mod tests {
         // This will extend the first fragment
         buf.alloc_header(20);
         assert_eq!(buf.len(), 140);
+        validate_buffer(&buf);
         {
             let header = buf.header_mut();
             header[0] = 3;
@@ -650,6 +662,7 @@ mod tests {
         assert_eq!(buf.len(), 512);
         buf.trim_head(20);
         assert!(buf.len() == 492);
+        validate_buffer(&buf);
 
         // Check the contents
         let mut dest = [0; 512];
@@ -678,6 +691,7 @@ mod tests {
         buf.alloc_header(20); // Prepends new fragment
         buf.trim_head(40); // Remove first fragment and then some
         assert_eq!(buf.len(), 492);
+        validate_buffer(&buf);
         let header = buf.header();
         assert_eq!(header[0], 20);
         assert_eq!(header[5], 25);
@@ -696,6 +710,7 @@ mod tests {
 
         buf.trim_head(5);
         assert_eq!(buf.len(), 0);
+        validate_buffer(&buf);
 
         std::mem::drop(buf);
         assert!(no_leaks());
@@ -721,6 +736,7 @@ mod tests {
 
         buf.trim_head(0);
         assert_eq!(buf.len(), 5);
+        validate_buffer(&buf);
 
         std::mem::drop(buf);
         assert!(no_leaks());
@@ -741,6 +757,7 @@ mod tests {
         assert!(buf.len() == 512);
         buf.trim_tail(20);
         assert!(buf.len() == 492);
+        validate_buffer(&buf);
 
         // Check the contents
         let mut dest = [0; 512];
@@ -765,6 +782,8 @@ mod tests {
         assert_eq!(buf.len(), 532);
         buf.trim_tail(40); // Remove part of the last fragment
         assert_eq!(buf.len(), 492);
+        validate_buffer(&buf);
+
         let mut dest = [0; 492];
         buf.copy_to_slice(&mut dest);
         assert_eq!(dest[0..492], [1; 492]);
@@ -783,6 +802,7 @@ mod tests {
 
         buf.trim_tail(5);
         assert_eq!(buf.len(), 0);
+        validate_buffer(&buf);
 
         std::mem::drop(buf);
         assert!(no_leaks());
@@ -808,6 +828,7 @@ mod tests {
 
         buf.trim_tail(0);
         assert_eq!(buf.len(), 5);
+        validate_buffer(&buf);
 
         std::mem::drop(buf);
         assert!(no_leaks());
@@ -819,14 +840,13 @@ mod tests {
         let mut buf = super::NetBuffer::new();
         buf.append_from_slice(&[1, 2, 3, 4, 5]);
         assert_eq!(buf.len(), 5);
+        validate_buffer(&buf);
         buf.append_from_slice(&[6, 7, 8, 9, 10]);
         assert_eq!(buf.len(), 10);
+        validate_buffer(&buf);
         buf.append_from_slice(&[11, 12, 13, 14, 15]);
         assert_eq!(buf.len(), 15);
-
-        // Append an empty slice and ensure the length doesn't change.
-        buf.append_from_slice(&[]);
-        assert_eq!(buf.len(), 15);
+        validate_buffer(&buf);
 
         // Check contents
         let mut dest = [0; 15];
@@ -845,6 +865,7 @@ mod tests {
         assert_eq!(buf.len(), 4);
         buf.append_from_slice(&[]);
         assert_eq!(buf.len(), 4);
+        validate_buffer(&buf);
 
         // Free buffers
         std::mem::drop(buf);
@@ -866,6 +887,7 @@ mod tests {
         let slice2 = [2; 1500];
         buf.append_from_slice(&[2; 1500]);
         assert_eq!(buf.len(), 2000);
+        validate_buffer(&buf);
 
         // Check the contents
         let mut dest = [0; 2000];
@@ -957,6 +979,8 @@ mod tests {
         buf2.append_from_slice(&[6; 512]);
         buf1.append_from_buffer(&buf2, 1000);
         assert_eq!(buf1.len(), 2536);
+        validate_buffer(&buf1);
+        validate_buffer(&buf2);
 
         // Check contents
         let mut dest = [0; 3000];
@@ -992,6 +1016,7 @@ mod tests {
 
         buf1.append_buffer(buf2);
         assert!(buf1.len() == 3072);
+        validate_buffer(&buf1);
 
         // Check contents
         let mut dest = [0; 1536];
@@ -1014,6 +1039,8 @@ mod tests {
         buf2.append_from_slice(&[1; 512]);
         buf1.append_buffer(buf2);
         assert!(buf1.len() == 512);
+        validate_buffer(&buf1);
+
         let mut dest = [0; 512];
         buf1.copy_to_slice(&mut dest);
         assert_eq!(dest[0..512], [1; 512]);
@@ -1033,6 +1060,7 @@ mod tests {
         let buf2 = super::NetBuffer::new();
         buf1.append_buffer(buf2);
         assert_eq!(buf1.len(), 5);
+        validate_buffer(&buf1);
 
         let mut dest = [0; 5];
         buf1.copy_to_slice(&mut dest);
@@ -1049,6 +1077,7 @@ mod tests {
         let buf2 = super::NetBuffer::new();
         buf1.append_buffer(buf2);
         assert_eq!(buf1.len(), 0);
+        validate_buffer(&buf1);
 
         std::mem::drop(buf1);
         assert!(no_leaks());
@@ -1077,11 +1106,13 @@ mod tests {
         assert_eq!(y[0], 40);
         buf.trim_head(20);
         assert_eq!(buf.len(), 452);
+        validate_buffer(&buf);
 
         // Append
         let mut receive_queue = super::NetBuffer::new();
         receive_queue.append_buffer(buf);
         assert_eq!(receive_queue.len(), 452);
+        validate_buffer(&receive_queue);
 
         // Read
         let mut dest = [0; 452];
@@ -1092,6 +1123,7 @@ mod tests {
 
         receive_queue.trim_head(452);
         assert_eq!(receive_queue.len(), 0);
+        validate_buffer(&receive_queue);
 
         std::mem::drop(receive_queue);
         assert!(no_leaks());
@@ -1124,6 +1156,8 @@ mod tests {
         let y = buf.header_mut();
         y[0] = 103;
         y[19] = 104;
+
+        validate_buffer(&buf);
 
         // Transmit
         let mut out_data = [0; 572];
