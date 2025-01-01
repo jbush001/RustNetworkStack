@@ -74,6 +74,8 @@ int tun_recv(void *buffer, unsigned int length) {
     return read(tun_fd, buffer, length);
 }
 
-int tun_send(const void *buffer, unsigned int length) {
-    return write(tun_fd, buffer, length);
+#define MAX_VECS 32
+
+int tun_sendv(struct iovec *vecs, size_t count) {
+    return writev(tun_fd, vecs, count);
 }

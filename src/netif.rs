@@ -19,10 +19,16 @@
 use crate::buf;
 use crate::util;
 
+#[repr(C)]
+struct IOVec {
+    base: *const u8,
+    len: usize,
+}
+
 extern "C" {
     fn tun_init() -> i32;
     fn tun_recv(buffer: *mut u8, length: usize) -> i32;
-    fn tun_send(buffer: *const u8, length: usize) -> i32;
+    fn tun_sendv(vecs: *const IOVec, length: usize) -> i32;
 }
 
 static mut LOCAL_IP: util::IPv4Addr = util::IPv4Addr::new();
@@ -52,11 +58,15 @@ pub fn recv_packet() -> buf::NetBuffer {
 }
 
 pub fn send_packet(packet: buf::NetBuffer) {
-    let mut writebuf = [0u8; 2048];
-    let packet_length = packet.len();
-    assert!(packet_length <= writebuf.len());
-    packet.copy_to_slice(&mut writebuf);
-    let result = unsafe { tun_send(writebuf.as_ptr(), packet_length) };
+    let mut writeVecs: Vec<IOVec> = Vec::new();
+    for slice in packet.iter(usize::MAX) {
+        writeVecs.push(IOVec {
+            base: unsafe { slice.as_ptr() },
+            len: slice.len(),
+        });
+    }
+
+    let result = unsafe { tun_sendv(writeVecs.as_ptr() as *const IOVec, writeVecs.len()) };
     if result <= 0 {
         println!("Error {} writing to TUN interface", result);
         std::process::exit(1);
