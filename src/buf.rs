@@ -68,7 +68,7 @@ pub struct BufferIterator<'a> {
     remaining: usize, // How many more bytes to copy.
 }
 
-struct BufferPool {
+struct FragmentPool {
     free_list: FragPointer,
     total_bufs: usize,
     free_bufs: usize,
@@ -78,12 +78,12 @@ struct BufferPool {
 const POOL_GROW_SIZE: usize = 16;
 
 lazy_static! {
-    static ref BUFFER_POOL: Mutex<BufferPool> = Mutex::new(BufferPool::new());
+    static ref BUFFER_POOL: Mutex<FragmentPool> = Mutex::new(FragmentPool::new());
 }
 
-impl BufferPool {
-    fn new() -> BufferPool {
-        BufferPool {
+impl FragmentPool {
+    fn new() -> FragmentPool {
+        FragmentPool {
             free_list: None,
             total_bufs: 0,
             free_bufs: 0,
@@ -91,7 +91,7 @@ impl BufferPool {
         }
     }
 
-    // Add new nodes to buffer pool. These are individually heap allocated.
+    // Add new nodes to fragment pool. These are individually heap allocated.
     fn grow(&mut self) {
         for _ in 0..POOL_GROW_SIZE {
             let mut frag = Box::new(BufferFragment::new());
@@ -173,7 +173,17 @@ impl BufferFragment {
     }
 }
 
+impl Drop for BufferFragment {
+    /// These should always to back into the pool. If this calls, it means
+    /// ownership has inadvertently been lost.
+    fn drop(&mut self) {
+        panic!("BufferFragment should never be dropped");
+    }
+}
+
 impl Drop for NetBuffer {
+    /// When a NetBuffer goes away, ensure all of its fragments go back into the
+    /// poool.
     fn drop(&mut self) {
         let mut frag = self.fragments.take();
         while frag.is_some() {
