@@ -19,6 +19,9 @@
 use crate::buf;
 use crate::util;
 
+const MAX_VECS: usize = 8;
+
+#[derive(Copy, Clone)]
 #[repr(C)]
 struct IOVec {
     base: *const u8,
@@ -42,23 +45,29 @@ pub fn init() {
     }
 }
 
-fn to_iovec(packet: &buf::NetBuffer) -> Vec<IOVec> {
-    let mut iovec: Vec<IOVec> = Vec::new();
+fn to_iovec(packet: &buf::NetBuffer, vec: &mut [IOVec]) -> usize {
+    let mut vec_count = 0;
     for slice in packet.iter(usize::MAX) {
-        iovec.push(IOVec {
+        vec[vec_count] = IOVec {
             base: slice.as_ptr(),
             len: slice.len(),
-        });
+        };
+
+        vec_count += 1
     }
 
-    iovec
+    vec_count
 }
 
 pub fn recv_packet() -> buf::NetBuffer {
     const MRU: usize = 2048;
     let mut packet = buf::NetBuffer::new_prealloc(MRU);
-    let iovec = to_iovec(&packet);
-    let result = unsafe { tun_recv(iovec.as_ptr() as *const u8, iovec.len()) };
+    let mut iovec: [IOVec; MAX_VECS] = [IOVec{
+        base: 0 as *const u8,
+        len: 0,
+    }; MAX_VECS];
+    let num_vecs = to_iovec(&packet, iovec.as_mut_slice());
+    let result = unsafe { tun_recv(iovec.as_ptr() as *const u8, num_vecs) };
     if result <= 0 {
         println!("Error {} reading from TUN interface", result);
         std::process::exit(1);
@@ -70,8 +79,12 @@ pub fn recv_packet() -> buf::NetBuffer {
 }
 
 pub fn send_packet(packet: buf::NetBuffer) {
-    let iovec = to_iovec(&packet);
-    let result = unsafe { tun_send(iovec.as_ptr() as *const u8, iovec.len()) };
+    let mut iovec: [IOVec; MAX_VECS] = [IOVec{
+        base: 0 as *const u8,
+        len: 0,
+    }; MAX_VECS];
+    let num_vecs = to_iovec(&packet, iovec.as_mut_slice());
+    let result = unsafe { tun_send(iovec.as_ptr() as *const u8, num_vecs) };
     if result <= 0 {
         println!("Error {} writing to TUN interface", result);
         std::process::exit(1);
