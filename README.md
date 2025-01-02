@@ -62,9 +62,16 @@ The network stack must be run with root privileges, as the TUN device is
 not accessible to regular users. It's probably possible to make configuration
 changes to avoid that, but I haven't bothered.
 
-    $ sudo ./target/debug/netstack
+You can also run tcpdump in another window to monitor traffic (this has to be
+invoked after netstack is running, otherwise the interface will not exist).
 
-Now try pinging this from another terminal.
+    sudo tcpdump -i tun0 -v
+
+### Ping
+
+    sudo ./target/debug/udp_echo &
+
+Now try pinging:
 
     $ ping 10.0.0.2
     PING 10.0.0.2 (10.0.0.2) 56(84) bytes of data.
@@ -73,29 +80,30 @@ Now try pinging this from another terminal.
     64 bytes from 10.0.0.2: icmp_seq=3 ttl=64 time=1.01 ms
     64 bytes from 10.0.0.2: icmp_seq=4 ttl=64 time=2.10 ms
 
-Can also run tcpdump in another window to monitor traffic (this has to be
-invoked after netstack is running, otherwise the interface will not exist).
+At the end of this test (As with any), you can kill the server
+with kill %1 (or just launch it in another terminal window so
+you can use ctrl-C)
 
-    sudo tcpdump -i tun0 -v
+### UDP
 
-The UDP stack can be tested with the included udp_test.py, which uses the
-host's network stack. After starting netstack, run this program to
-send UDP packets to it:
-
+    sudo ./target/debug/udp_echo &
     python3 udp_test.py 10.0.0.2
 
-To test TCP continuous transfer, before launching app (need to uncomment
-test_tcp_download in main.rs)
+### TCP Download 1
 
-    python3 chargen_server.py
+    python3 chargen_server.py &
+    sudo ./target/debug/tcp_bulk_download
 
-Then launch the app as above and hit any key to begin the download.
+Press a key to start the transfer
 
-To test the full socket lifecycle, instead:
+### TCP Download 2
 
-    python3 -m http.server 3000
+    python3 -m http.server 3000 &
+    sudo ./target/debug/tcp_bulk_download
 
-To test bulk upload, uncomment test_tcp_upload in main.rs and start this first:
+### TCP Upload
 
-    python3 sink_server 3000
+    python3 sink_server.py 3000 &
+    sudo ./target/debug/tcp_bulk_upload
+
 
