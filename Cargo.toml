@@ -13,19 +13,19 @@ cc = "1.0"
 
 [lib]
 name = "netstack"
-path = "src/lib.rs"
+path = "src/stack/lib.rs"
 
 [[bin]]
 name = "tcp_bulk_download"
-path = "src/tcp_bulk_download.rs"
+path = "src/test_apps/tcp_bulk_download.rs"
 
 [[bin]]
 name = "udp_echo"
-path = "src/udp_echo.rs"
+path = "src/test_apps/udp_echo.rs"
 
 [[bin]]
 name = "tcp_bulk_upload"
-path = "src/tcp_bulk_upload.rs"
+path = "src/test_apps/tcp_bulk_upload.rs"
 
 [build]
 script = "build.rs"

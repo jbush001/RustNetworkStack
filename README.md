@@ -87,11 +87,11 @@ you can use ctrl-C)
 ### UDP
 
     sudo ./target/debug/udp_echo &
-    python3 udp_test.py 10.0.0.2
+    python3 scripts/udp_test.py 10.0.0.2
 
 ### TCP Download 1
 
-    python3 chargen_server.py &
+    python3 scripts/chargen_server.py &
     sudo ./target/debug/tcp_bulk_download
 
 Press a key to start the transfer
@@ -103,7 +103,7 @@ Press a key to start the transfer
 
 ### TCP Upload
 
-    python3 sink_server.py 3000 &
+    python3 scripts/sink_server.py 3000 &
     sudo ./target/debug/tcp_bulk_upload
 
 
