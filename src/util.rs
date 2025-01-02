@@ -84,7 +84,7 @@ pub fn compute_buffer_ones_comp(initial_sum: u16, buffer: &buf::NetBuffer) -> u1
 }
 
 pub fn get_be16(buffer: &[u8]) -> u16 {
-    (((buffer[0] as u16) << 8) | buffer[1] as u16) as u16
+    ((buffer[0] as u16) << 8) | buffer[1] as u16
 }
 
 pub fn get_be32(buffer: &[u8]) -> u32 {

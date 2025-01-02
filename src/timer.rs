@@ -62,7 +62,7 @@ where
     list.push(Timer {
         absolute_timeout_ms: current_time_ms() + timeout_ms as u64,
         closure: Some(Box::new(closure)),
-        id: id,
+        id,
     });
 
     id

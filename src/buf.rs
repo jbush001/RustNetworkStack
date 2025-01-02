@@ -260,14 +260,14 @@ impl NetBuffer {
     pub fn header(&self) -> &[u8] {
         assert!(self.fragments.is_some()); // Shouldn't call on empty buffer
         let head_frag = self.fragments.as_ref().unwrap();
-        return &head_frag.data[head_frag.data_start..head_frag.data_end];
+        &head_frag.data[head_frag.data_start..head_frag.data_end]
     }
 
     /// Same as header, but mutable. Used for writing the header.
     pub fn header_mut(&mut self) -> &mut [u8] {
         assert!(self.fragments.is_some()); // Shouldn't call on empty buffer
         let head_frag = self.fragments.as_mut().unwrap();
-        return &mut head_frag.data[head_frag.data_start..head_frag.data_end];
+        &mut head_frag.data[head_frag.data_start..head_frag.data_end]
     }
 
     /// Reserve space for another header to be prepended to the buffer
@@ -377,7 +377,7 @@ impl NetBuffer {
 
     /// Add all data in the passed slice to the end of this buffer.
     pub fn append_from_slice(&mut self, data: &[u8]) {
-        if data.len() == 0 {
+        if data.is_empty() {
             return;
         }
 
@@ -434,7 +434,7 @@ impl NetBuffer {
         assert!(copied == self.length || copied == dest.len());
         assert!(copied != self.len() || iter.next().is_none());
 
-        return copied;
+        copied
     }
 
     /// Copy data out of another buffer into this one, leaving the original

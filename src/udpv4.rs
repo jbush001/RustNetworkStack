@@ -41,7 +41,7 @@ impl UDPSocket {
     fn new(port: u16) -> UDPSocket {
         UDPSocket {
             receive_queue: VecDeque::new(),
-            port: port,
+            port,
         }
     }
 }
@@ -62,7 +62,7 @@ pub fn udp_recv(
     let mut guard = socket.lock().unwrap();
     loop {
         let entry = guard.receive_queue.pop_front();
-        if !entry.is_none() {
+        if entry.is_some() {
             let (source_addr, source_port, buf) = entry.unwrap();
             *out_addr = source_addr;
             *out_port = source_port;

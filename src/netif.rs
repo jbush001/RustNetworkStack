@@ -63,7 +63,7 @@ pub fn recv_packet() -> buf::NetBuffer {
     const MRU: usize = 2048;
     let mut packet = buf::NetBuffer::new_prealloc(MRU);
     let mut iovec: [IOVec; MAX_VECS] = [IOVec {
-        base: 0 as *const u8,
+        base: std::ptr::null::<u8>(),
         len: 0,
     }; MAX_VECS];
     let num_vecs = to_iovec(&packet, iovec.as_mut_slice());
@@ -80,7 +80,7 @@ pub fn recv_packet() -> buf::NetBuffer {
 
 pub fn send_packet(packet: buf::NetBuffer) {
     let mut iovec: [IOVec; MAX_VECS] = [IOVec {
-        base: 0 as *const u8,
+        base: std::ptr::null::<u8>(),
         len: 0,
     }; MAX_VECS];
     let num_vecs = to_iovec(&packet, iovec.as_mut_slice());

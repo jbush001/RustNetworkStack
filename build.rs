@@ -14,8 +14,6 @@
 // limitations under the License.
 //
 
-use cc;
-
 // Compile the C TUN wrappers into a library that will be linked to the Rust
 // code.
 fn main() {

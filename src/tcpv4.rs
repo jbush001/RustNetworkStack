@@ -21,6 +21,8 @@ use crate::timer;
 use crate::util;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
+use std::fmt;
+use std::fmt::Display;
 use std::sync::Condvar;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -95,7 +97,7 @@ lazy_static! {
 /// Generate a random ephemeral port that doesn't conflict with any open sockets.
 fn get_ephemeral_port(remote_ip: util::IPv4Addr, remote_port: u16) -> u16 {
     loop {
-        const RANGE: u16 = (0xffff - EPHEMERAL_PORT_BASE) as u16;
+        const RANGE: u16 = 0xffff - EPHEMERAL_PORT_BASE;
         let port = EPHEMERAL_PORT_BASE + (rand::random::<u16>() % RANGE);
         if !PORT_MAP
             .lock()
@@ -145,7 +147,7 @@ pub fn tcp_open(
 pub fn tcp_close(socket: &mut Arc<Mutex<TCPSocket>>) {
     let mut guard = socket.lock().unwrap();
 
-    println!("{} tcp_close: state {:?}", guard.to_string(), guard.state);
+    println!("{} tcp_close: state {:?}", guard, guard.state);
     match guard.state {
         TCPState::Established => {
             guard.send_packet(buf::NetBuffer::new(), FLAG_FIN | FLAG_ACK);
@@ -215,7 +217,7 @@ fn retransmit(handle: Arc<Mutex<TCPSocket>>) {
         println!("Retransmitting sequence {}", socket.next_transmit_seq);
         let mut packet = buf::NetBuffer::new();
         packet.append_from_buffer(&socket.retransmit_queue, TCP_MTU);
-        util::print_binary(&packet.header());
+        util::print_binary(packet.header());
         socket.send_packet(packet, FLAG_ACK | FLAG_PSH);
         let socket_arc = handle.clone();
         socket.retransmit_timer_id = timer::set_timer(RETRANSMIT_INTERVAL, move || {
@@ -227,23 +229,23 @@ fn retransmit(handle: Arc<Mutex<TCPSocket>>) {
 fn flags_to_str(flags: u8) -> String {
     let mut result = String::new();
     if flags & FLAG_FIN != 0 {
-        result.push_str("F");
+        result.push('F');
     }
 
     if flags & FLAG_SYN != 0 {
-        result.push_str("S");
+        result.push('S');
     }
 
     if flags & FLAG_RST != 0 {
-        result.push_str("R");
+        result.push('R');
     }
 
     if flags & FLAG_PSH != 0 {
-        result.push_str("P");
+        result.push('P');
     }
 
     if flags & FLAG_ACK != 0 {
-        result.push_str("A");
+        result.push('A');
     }
 
     result
@@ -252,9 +254,9 @@ fn flags_to_str(flags: u8) -> String {
 impl TCPSocket {
     fn new(remote_ip: util::IPv4Addr, remote_port: u16, local_port: u16) -> TCPSocket {
         TCPSocket {
-            remote_ip: remote_ip,
-            remote_port: remote_port,
-            local_port: local_port,
+            remote_ip,
+            remote_port,
+            local_port,
             next_transmit_seq: rand::random::<u32>(),
             transmit_window_max: 0,
             state: TCPState::Closed,
@@ -289,7 +291,7 @@ impl TCPSocket {
 
         println!(
             "{}: send_packet: flags {} seq {} ack {} window {}",
-            self.to_string(),
+            self,
             flags_to_str(flags),
             self.next_transmit_seq,
             ack_seq,
@@ -311,7 +313,7 @@ impl TCPSocket {
     fn set_state(&mut self, new_state: TCPState) {
         println!(
             "{}: Change state from {:?} to {:?}",
-            self.to_string(),
+            self,
             self.state,
             new_state
         );
@@ -320,9 +322,10 @@ impl TCPSocket {
     }
 }
 
-impl ToString for TCPSocket {
-    fn to_string(&self) -> String {
-        format!(
+impl Display for TCPSocket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
             "localhost:{} {}:{}",
             self.local_port, self.remote_ip, self.remote_port
         )
@@ -433,7 +436,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
 
     println!(
         "{}: tcp_input: flags {} seq {} ack {} window {} ({} bytes of data)",
-        socket.to_string(),
+        socket,
         flags_to_str(flags),
         seq_num,
         ack_num,
@@ -450,7 +453,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         if ack_num != expected {
             println!(
                 "{}: Unexpected ack {} expected {}",
-                socket.to_string(),
+                socket,
                 ack_num,
                 expected
             );
@@ -463,7 +466,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     }
 
     if (flags & FLAG_RST) != 0 {
-        println!("{}: Connection reset", socket.to_string());
+        println!("{}: Connection reset", socket);
         socket.set_state(TCPState::Closed);
         RECV_WAIT.notify_all();
         return;
@@ -476,8 +479,8 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
             seq_num.wrapping_add(packet.len() as u32),
         );
         let got = socket.reassembler.add_packet(packet, seq_num);
-        if got.is_some() {
-            socket.receive_queue.append_buffer(got.unwrap());
+        if let Some(socketdata) = got {
+            socket.receive_queue.append_buffer(socketdata);
             RECV_WAIT.notify_all();
         }
 
@@ -486,7 +489,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
             if socket.num_delayed_acks >= MAX_DELAYED_ACKS || (flags & FLAG_FIN) != 0 {
                 println!(
                     "{}: Sending immediate ack, num_delayed_acks={}",
-                    socket.to_string(),
+                    socket,
                     socket.num_delayed_acks
                 );
                 socket.num_delayed_acks = 0;
@@ -497,7 +500,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
 
                 socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
             } else if socket.delayed_ack_timer_id == -1 {
-                println!("{}: Starting delayed ack timer", socket.to_string());
+                println!("{}: Starting delayed ack timer", socket);
                 let socket_arc = sockref.clone();
                 socket.delayed_ack_timer_id = timer::set_timer(MAX_ACK_DELAY, move || {
                     let mut socket = socket_arc.lock().unwrap();
@@ -505,7 +508,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                         return;
                     }
 
-                    println!("{}: Sending delayed ack", socket.to_string());
+                    println!("{}: Sending delayed ack", socket);
                     socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
                     socket.delayed_ack_timer_id = -1;
                     socket.num_delayed_acks = 0;
@@ -513,7 +516,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
             } else {
                 println!(
                     "{}: Deferring ack, count is now {}",
-                    socket.to_string(),
+                    socket,
                     socket.num_delayed_acks
                 );
             }
@@ -562,7 +565,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                     socket.retransmit_queue.trim_head(trim);
                     println!(
                         "{}: Trimming {} acked bytes from retransmit queue, size is now {}",
-                        socket.to_string(),
+                        socket,
                         trim,
                         socket.retransmit_queue.len()
                     );
@@ -628,7 +631,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         _ => {
             println!(
                 "{}: Received packet in state: {:?}",
-                socket.to_string(),
+                socket,
                 socket.state
             );
         }
@@ -692,7 +695,7 @@ fn response_timeout(sockref: Arc<Mutex<TCPSocket>>) {
     if socket.request_retry_count >= MAX_RETRIES {
         println!(
             "{}: Too many response timeouts in state {:?}, closing",
-            socket.to_string(),
+            socket,
             socket.state
         );
         socket.set_state(TCPState::Closed);
@@ -702,7 +705,7 @@ fn response_timeout(sockref: Arc<Mutex<TCPSocket>>) {
 
     println!(
         "{}: Response timeout state {:?}",
-        socket.to_string(),
+        socket,
         socket.state
     );
     match socket.state {
@@ -730,7 +733,7 @@ fn response_timeout(sockref: Arc<Mutex<TCPSocket>>) {
             // This would indicate a bug: we set a timer where we shoudn't have.
             panic!(
                 "{}: unexpected state in response_timeout: {:?}",
-                socket.to_string(),
+                socket,
                 socket.state
             );
         }

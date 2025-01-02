@@ -47,19 +47,19 @@ const DEFAULT_TTL: u8 = 64;
 
 pub fn ip_input(mut packet: buf::NetBuffer) {
     let header = packet.header();
-    let version = (header[0] as u8) >> 4;
+    let version = header[0] >> 4;
     if version != 4 {
         return;
     }
 
-    let header_len = (((header[0] as u8) & 0xf) as usize) * 4;
+    let header_len = ((header[0] & 0xf) as usize) * 4;
     let checksum = util::compute_checksum(&header[..header_len]);
     if checksum != 0 {
         println!("IP checksum error {:04x}", checksum);
         return;
     }
 
-    let protocol = header[9] as u8;
+    let protocol = header[9];
     let source_addr = util::IPv4Addr::new_from(&header[12..16]);
 
     packet.trim_head(header_len);
