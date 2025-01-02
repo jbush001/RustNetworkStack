@@ -74,6 +74,7 @@ pub fn recv_packet() -> buf::NetBuffer {
     }
 
     packet.trim_tail(packet.len() - result as usize);
+    util::STATS.packets_received.inc();
 
     packet
 }
@@ -89,6 +90,8 @@ pub fn send_packet(packet: buf::NetBuffer) {
         println!("Error {} writing to TUN interface", result);
         std::process::exit(1);
     }
+
+    util::STATS.packets_sent.inc();
 }
 
 pub fn get_ipaddr() -> util::IPv4Addr {

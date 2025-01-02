@@ -17,6 +17,7 @@
 use lazy_static::lazy_static;
 use std::cmp;
 use std::sync::Mutex;
+use crate::util;
 
 ///
 /// This class implements an efficient, flexible container for unstructured
@@ -73,9 +74,6 @@ pub struct BufferIterator<'a> {
 /// fast.
 struct FragmentPool {
     free_list: FragPointer,
-    total_bufs: usize,
-    free_bufs: usize,
-    total_allocs: u64,
 }
 
 const POOL_GROW_SIZE: usize = 16;
@@ -85,15 +83,16 @@ lazy_static! {
     static ref FRAGMENT_POOL: Mutex<FragmentPool> = Mutex::new(FragmentPool::new());
 }
 
+pub fn buffer_count_to_memory(count: u32) -> u32 {
+    count * FRAGMENT_SIZE as u32
+}
+
 /// Note that this instance is protected by an external mutex, so none of these
 /// functions are reentrant.
 impl FragmentPool {
     fn new() -> FragmentPool {
         FragmentPool {
             free_list: None,
-            total_bufs: 0,
-            free_bufs: 0,
-            total_allocs: 0,
         }
     }
 
@@ -111,12 +110,7 @@ impl FragmentPool {
             self.free_list.replace(frag);
         }
 
-        self.total_bufs += POOL_GROW_SIZE;
-        self.free_bufs += POOL_GROW_SIZE;
-        println!(
-            "Grow pool, g_free_bufs={}, g_pool_size={}",
-            self.free_bufs, self.total_bufs
-        );
+        util::STATS.buffers_created.add(POOL_GROW_SIZE as u32);
     }
 
     /// Allocate a new fragment from the pool.
@@ -124,14 +118,10 @@ impl FragmentPool {
     /// how many buffers are wanted.
     fn alloc(&mut self) -> Box<BufferFragment> {
         if self.free_list.is_none() {
-            assert!(self.free_bufs == 0);
             self.grow();
         }
 
-        assert!(self.free_bufs > 0);
-        assert!(self.total_bufs > 0);
-        self.total_allocs += 1;
-        self.free_bufs -= 1;
+        util::STATS.buffers_allocated.inc();
 
         let mut new_frag = self.free_list.take().unwrap();
         if new_frag.next.is_some() {
@@ -151,26 +141,10 @@ impl FragmentPool {
     /// unstable and not fully supported.
     /// Note also that we never return fragments to the system allocator.
     fn free(&mut self, mut fragment: Box<BufferFragment>) {
-        self.free_bufs += 1;
-        assert!(self.free_bufs <= self.total_bufs);
+        util::STATS.buffers_freed.inc();
         fragment.next = self.free_list.take();
         self.free_list.replace(fragment);
     }
-}
-
-pub fn print_alloc_stats() {
-    let pool = FRAGMENT_POOL.lock().unwrap();
-    println!(
-        "Pool size: {} ({}k)",
-        pool.total_bufs,
-        pool.total_bufs * FRAGMENT_SIZE / 1024
-    );
-    println!(
-        "Free buffers: {} ({}k)",
-        pool.free_bufs,
-        pool.free_bufs * FRAGMENT_SIZE / 1024
-    );
-    println!("Total allocs: {}", pool.total_allocs);
 }
 
 impl BufferFragment {

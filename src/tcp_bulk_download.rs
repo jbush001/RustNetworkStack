@@ -16,7 +16,7 @@
 
 use std::io::Read;
 use std::time::Duration;
-use netstack::{init_netstack, tcpv4, util, buf};
+use netstack::{init_netstack, tcpv4, util};
 use std::thread::sleep;
 
 fn main() {
@@ -56,11 +56,11 @@ fn main() {
     }
 
     println!("Closing socket");
-    buf::print_alloc_stats();
     tcpv4::tcp_close(&mut socket);
     std::mem::drop(socket);
-    buf::print_alloc_stats();
 
     // Wait a spell to see what other things come in.
-    sleep(Duration::from_secs(10));
+    sleep(Duration::from_secs(5));
+
+    util::print_stats();
 }

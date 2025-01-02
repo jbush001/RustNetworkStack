@@ -16,6 +16,7 @@
 
 use crate::buf;
 use std::convert::TryInto;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IPv4Addr {
@@ -120,6 +121,59 @@ pub fn print_binary(buffer: &[u8]) {
 pub fn seq_gt(val1: u32, val2: u32) -> bool {
     let diff = val1.wrapping_sub(val2);
     diff < 0x80000000 && diff != 0
+}
+
+pub struct PerfCounter(AtomicU32);
+
+impl PerfCounter {
+    pub const fn new() -> Self {
+        PerfCounter(AtomicU32::new(0))
+    }
+
+    pub fn inc(&self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn add(&self, value: u32) {
+        self.0.fetch_add(value, Ordering::Relaxed);
+    }
+
+    pub fn get(&self) -> u32 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+pub struct Statistics {
+    pub packets_received: PerfCounter,
+    pub packets_sent: PerfCounter,
+    pub packets_retransmitted: PerfCounter,
+    pub buffers_allocated: PerfCounter,
+    pub buffers_freed: PerfCounter,
+    pub buffers_created: PerfCounter,
+}
+
+pub static STATS: Statistics = Statistics {
+    packets_received: PerfCounter::new(),
+    packets_sent: PerfCounter::new(),
+    packets_retransmitted: PerfCounter::new(),
+    buffers_allocated: PerfCounter::new(),
+    buffers_freed: PerfCounter::new(),
+    buffers_created: PerfCounter::new(),
+};
+
+pub fn print_stats() {
+    println!("Packets received: {}", STATS.packets_received.get());
+    println!("Packets sent: {}", STATS.packets_sent.get());
+    println!("Packets retransmitted: {}", STATS.packets_retransmitted.get());
+    println!("Buffers allocated: {}", STATS.buffers_allocated.get());
+    println!("Buffers freed: {}", STATS.buffers_freed.get());
+    println!("Buffers created: {}", STATS.buffers_created.get());
+
+    let current_buf_inuse = STATS.buffers_allocated.get() - STATS.buffers_freed.get();
+    let current_memory = buf::buffer_count_to_memory(current_buf_inuse);
+    let total_buffer_memory = buf::buffer_count_to_memory(STATS.buffers_created.get());
+    println!("Current buffer memory in use: {}k", current_memory / 1024);
+    println!("Total buffer memory allocated: {}k", total_buffer_memory / 1024);
 }
 
 mod tests {

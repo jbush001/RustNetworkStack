@@ -245,6 +245,8 @@ fn retransmit(socket: SocketReference) {
         return;
     }
 
+    util::STATS.packets_retransmitted.inc();
+
     if guard.retransmit_queue.len() > 0 {
         println!("Retransmitting sequence {}", guard.next_transmit_seq);
         let mut packet = buf::NetBuffer::new();

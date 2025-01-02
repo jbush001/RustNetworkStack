@@ -16,12 +16,12 @@
 
 // This one probably shouldn't be public, but it is because apps use the
 // function to print the buffer allocation stats. Perhaps refactor that.
-pub mod buf;
 
 pub mod icmpv4;
 pub mod tcpv4;
 pub mod udpv4;
 pub mod util;
+mod buf;
 mod timer;
 mod ipv4;
 mod netif;

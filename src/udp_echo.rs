@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-use netstack::{init_netstack, udpv4, util, buf};
+use netstack::{init_netstack, udpv4, util};
 
 fn main() {
     init_netstack();
@@ -45,7 +45,8 @@ fn main() {
             source_port,
             &data[..received as usize],
         );
-        buf::print_alloc_stats();
+
+        util::print_stats();
     }
 }
 
