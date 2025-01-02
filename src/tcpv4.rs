@@ -23,7 +23,7 @@ use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
-use std::sync::{Arc, Mutex, MutexGuard, Condvar};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 /// Each socket is uniquely identified by the tuple of remote_ip/remote_port/local_port
 type SocketKey = (util::IPv4Addr, u16, u16);
@@ -92,12 +92,15 @@ lazy_static! {
 }
 
 /// Generate a random ephemeral port that doesn't conflict with any open sockets.
-fn get_ephemeral_port(guard: &mut MutexGuard<PortMap>, remote_ip: util::IPv4Addr, remote_port: u16) -> u16 {
+fn get_ephemeral_port(
+    guard: &mut MutexGuard<PortMap>,
+    remote_ip: util::IPv4Addr,
+    remote_port: u16,
+) -> u16 {
     loop {
         const RANGE: u16 = 0xffff - EPHEMERAL_PORT_BASE;
         let port = EPHEMERAL_PORT_BASE + (rand::random::<u16>() % RANGE);
-        if !guard.contains_key(&(remote_ip, remote_port, port))
-        {
+        if !guard.contains_key(&(remote_ip, remote_port, port)) {
             return port;
         }
     }
@@ -110,11 +113,10 @@ pub fn tcp_open(
 
     let mut portmap_guard = PORT_MAP.lock().unwrap();
     let local_port = get_ephemeral_port(&mut portmap_guard, remote_ip, remote_port);
-    let socket = Arc::new((Mutex::new(TCPSocket::new(
-        remote_ip,
-        remote_port,
-        local_port,
-    )), Condvar::new()));
+    let socket = Arc::new((
+        Mutex::new(TCPSocket::new(remote_ip, remote_port, local_port)),
+        Condvar::new(),
+    ));
 
     portmap_guard.insert((remote_ip, remote_port, local_port), socket.clone());
     drop(portmap_guard);
@@ -314,9 +316,7 @@ impl TCPSocket {
     fn set_state(&mut self, new_state: TCPState) {
         println!(
             "{}: Change state from {:?} to {:?}",
-            self,
-            self.state,
-            new_state
+            self, self.state, new_state
         );
         self.state = new_state;
         self.request_retry_count = 0;
@@ -455,9 +455,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         if ack_num != expected {
             println!(
                 "{}: Unexpected ack {} expected {}",
-                guard,
-                ack_num,
-                expected
+                guard, ack_num, expected
             );
         }
     }
@@ -491,8 +489,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
             if guard.num_delayed_acks >= MAX_DELAYED_ACKS || (flags & FLAG_FIN) != 0 {
                 println!(
                     "{}: Sending immediate ack, num_delayed_acks={}",
-                    guard,
-                    guard.num_delayed_acks
+                    guard, guard.num_delayed_acks
                 );
                 guard.num_delayed_acks = 0;
                 if guard.delayed_ack_timer_id != -1 {
@@ -520,8 +517,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
             } else {
                 println!(
                     "{}: Deferring ack, count is now {}",
-                    guard,
-                    guard.num_delayed_acks
+                    guard, guard.num_delayed_acks
                 );
             }
         } else {
@@ -633,11 +629,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         }
 
         _ => {
-            println!(
-                "{}: Received packet in state: {:?}",
-                guard,
-                guard.state
-            );
+            println!("{}: Received packet in state: {:?}", guard, guard.state);
         }
     }
 }
@@ -701,19 +693,14 @@ fn response_timeout(socket: SocketReference) {
     if guard.request_retry_count >= MAX_RETRIES {
         println!(
             "{}: Too many response timeouts in state {:?}, closing",
-            guard,
-            guard.state
+            guard, guard.state
         );
         guard.set_state(TCPState::Closed);
         cond.notify_all();
         return;
     }
 
-    println!(
-        "{}: Response timeout state {:?}",
-        guard,
-        guard.state
-    );
+    println!("{}: Response timeout state {:?}", guard, guard.state);
     match guard.state {
         TCPState::Closed | TCPState::Established => {
             // This can occur if the timer fires as the connection state
@@ -739,8 +726,7 @@ fn response_timeout(socket: SocketReference) {
             // This would indicate a bug: we set a timer where we shoudn't have.
             panic!(
                 "{}: unexpected state in response_timeout: {:?}",
-                guard,
-                guard.state
+                guard, guard.state
             );
         }
     }

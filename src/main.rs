@@ -51,9 +51,7 @@ fn test_udp_echo() {
         let received = udpv4::udp_recv(&mut socket, &mut data, &mut source_addr, &mut source_port);
         println!(
             "Received UDP packet from {}:{} ({} bytes)",
-            source_addr,
-            source_port,
-            received
+            source_addr, source_port, received
         );
 
         util::print_binary(&data[..received as usize]);

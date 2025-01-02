@@ -34,11 +34,6 @@ type PortMap = HashMap<u16, SocketReference>;
 
 lazy_static! {
     static ref PORT_MAP: Mutex<PortMap> = Mutex::new(HashMap::new());
-
-    // This is not ideal, as it wakes up all threads waiting for data any time there
-    // is actitiy on any socket. But we get into all kinds of reference/ownership
-    // complexity if we try to associate a condition with each socket.
-    static ref RECV_WAIT: Condvar = Condvar::new();
 }
 
 impl UDPSocket {
@@ -131,7 +126,9 @@ pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
     let (mutex, cond) = &*socket;
     let mut guard = mutex.lock().unwrap();
 
-    guard.receive_queue.push_back((source_addr, source_port, packet));
+    guard
+        .receive_queue
+        .push_back((source_addr, source_port, packet));
 
     cond.notify_all();
 }
