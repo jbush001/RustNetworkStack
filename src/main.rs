@@ -1,5 +1,5 @@
 //
-// Copyright 2024 Jeff Bush
+// Copyright 2024-2025 Jeff Bush
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -65,7 +65,7 @@ fn test_udp_echo() {
     }
 }
 
-fn test_tcp_connect() {
+fn test_tcp_download() {
     // Wait for a key press
     println!("Press key to connect");
     let _ = std::io::stdin().read(&mut [0u8]).unwrap();
@@ -106,6 +106,47 @@ fn test_tcp_connect() {
     buf::print_alloc_stats();
 }
 
+fn test_tcp_upload() {
+    println!("Press key to connect");
+    let _ = std::io::stdin().read(&mut [0u8]).unwrap();
+
+    let result = tcpv4::tcp_open(util::IPv4Addr::new_from(&[10u8, 0, 0, 1]), 3000);
+    if result.is_err() {
+        println!("Failed to open socket: {}", result.err().unwrap());
+        return;
+    }
+
+    let mut socket = result.unwrap();
+
+    println!("Socket is open");
+    let mut data = [0; 0x100000];
+
+    // Write a chargen pattern into the buffer
+    // Each line is 72 ASCII characters along with a CR/LF
+    let LINE_LENGTH = 74;
+    let PATTERN_LENGTH = 95;
+    for i in 0..data.len() {
+        let line_num = i / LINE_LENGTH;
+        let line_offset = i % LINE_LENGTH;
+        let start_char = line_num % PATTERN_LENGTH;
+
+        if line_offset == LINE_LENGTH - 2 {
+            data[i] = '\r' as u8;
+        } else if line_offset == LINE_LENGTH - 1 {
+            data[i] = '\n' as u8;
+        } else {
+            data[i] = ((start_char + line_offset) % PATTERN_LENGTH + 32) as u8;
+        }
+    }
+
+    tcpv4::tcp_write(&mut socket, &data);
+    tcpv4::tcp_close(&mut socket);
+    std::mem::drop(socket);
+
+    println!("Closing socket");
+    buf::print_alloc_stats();
+}
+
 fn main() {
     netif::init();
     timer::init();
@@ -117,7 +158,8 @@ fn main() {
         test_udp_echo();
     });
 
-    test_tcp_connect();
+    //test_tcp_download();
+    test_tcp_upload();
 
     std::thread::park();
 }

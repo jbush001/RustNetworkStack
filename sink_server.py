@@ -1,5 +1,5 @@
 #
-# Copyright 2024 Jeff Bush
+# Copyright 2025 Jeff Bush
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,8 +35,13 @@ while True:
     print(f'Accepted socket from {addr}')
     try:
         while True:
-            for offset in range(0, len(PATTERN) // 2):
-                client_conn.send(bytes(PATTERN[offset:offset + LINE_LEN] + '\r\n', 'UTF-8'))
+            data = client_conn.recv(1024)
+            if not data:
+                break
+
+            print(data.decode('utf-8'), end='')
+
+        client_conn.close()
     except BrokenPipeError:
         client_conn.close()
 

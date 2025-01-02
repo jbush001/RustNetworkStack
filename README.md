@@ -84,7 +84,8 @@ send UDP packets to it:
 
     python3 udp_test.py 10.0.0.2
 
-To test TCP continuous transfer, before launching app:
+To test TCP continuous transfer, before launching app (need to uncomment
+test_tcp_download in main.rs)
 
     python3 chargen_server.py
 
@@ -93,3 +94,8 @@ Then launch the app as above and hit any key to begin the download.
 To test the full socket lifecycle, instead:
 
     python3 -m http.server 3000
+
+To test bulk upload, uncomment test_tcp_upload in main.rs and start this first:
+
+    python3 sink_server 3000
+

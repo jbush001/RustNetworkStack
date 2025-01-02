@@ -1,5 +1,5 @@
 //
-// Copyright 2024 Jeff Bush
+// Copyright 2024-2025 Jeff Bush
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,8 +25,6 @@ use std::fmt;
 use std::fmt::Display;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
-/// Each socket is uniquely identified by the tuple of remote_ip/remote_port/local_port
-type SocketKey = (util::IPv4Addr, u16, u16);
 const EPHEMERAL_PORT_BASE: u16 = 49152;
 const TCP_MTU: usize = 1500;
 const RETRANSMIT_INTERVAL: u32 = 1000; // HACK: this should back off
@@ -84,7 +82,14 @@ pub struct TCPReassembler {
     out_of_order: Vec<(u32, buf::NetBuffer)>,
 }
 
+// The condition in the socket reference is used to signal to clients of the
+// API that are waiting, for example, for a reader waiting for new data or
+// on open. This must be stored outside the socket structure itself
+// Because the mutex is released while waiting on it.
 type SocketReference = Arc<(Mutex<TCPSocket>, Condvar)>;
+
+/// Each socket is uniquely identified by the tuple of remote_ip/remote_port/local_port
+type SocketKey = (util::IPv4Addr, u16, u16);
 type PortMap = HashMap<SocketKey, SocketReference>;
 
 lazy_static! {
@@ -92,7 +97,7 @@ lazy_static! {
 }
 
 /// Generate a random ephemeral port that doesn't conflict with any open sockets.
-fn get_ephemeral_port(
+fn find_ephemeral_port(
     guard: &mut MutexGuard<PortMap>,
     remote_ip: util::IPv4Addr,
     remote_port: u16,
@@ -112,7 +117,7 @@ pub fn tcp_open(
 ) -> Result<SocketReference, &'static str> {
 
     let mut portmap_guard = PORT_MAP.lock().unwrap();
-    let local_port = get_ephemeral_port(&mut portmap_guard, remote_ip, remote_port);
+    let local_port = find_ephemeral_port(&mut portmap_guard, remote_ip, remote_port);
     let socket = Arc::new((
         Mutex::new(TCPSocket::new(remote_ip, remote_port, local_port)),
         Condvar::new(),
@@ -183,27 +188,51 @@ pub fn tcp_read(socket: &mut SocketReference, data: &mut [u8]) -> i32 {
 }
 
 pub fn tcp_write(socket: &mut SocketReference, data: &[u8]) -> i32 {
-    assert!(data.len() < TCP_MTU); // XXX Fix this at some point
-
-    let (mutex, _cond) = &**socket;
+    let (mutex, cond) = &**socket;
     let mut guard = mutex.lock().unwrap();
 
     if matches!(guard.state, TCPState::Closed) {
         return -1;
     }
 
-    let mut packet = buf::NetBuffer::new();
-    packet.append_from_slice(data);
-    guard.send_packet(packet, FLAG_ACK | FLAG_PSH);
+    let mut offset = 0;
+    while offset < data.len() {
+        let packet_length = std::cmp::min(data.len() - offset, TCP_MTU);
+        if util::seq_gt(
+            guard.next_transmit_seq.wrapping_add(packet_length as u32),
+            guard.transmit_window_max,
+        ) {
+            // We are out of transmit window. Wait for acks to come in.
+            println!(
+                "{}: Waiting for transmit window to open, next_seq {} window_max {}",
+                guard, guard.next_transmit_seq, guard.transmit_window_max
+            );
+            guard = cond.wait(guard).unwrap();
+            println!("{}: Transmit window opened", guard);
+            if matches!(guard.state, TCPState::Closed) {
+                return offset as i32;
+            }
 
-    guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(data.len() as u32);
-    guard.retransmit_queue.append_from_slice(data);
-    if guard.retransmit_timer_id == -1 {
-        let socket_arc = socket.clone();
-        guard.retransmit_timer_id = timer::set_timer(RETRANSMIT_INTERVAL, move || {
-            retransmit(socket_arc);
-        });
+            continue;
+        }
+
+        let mut packet = buf::NetBuffer::new();
+        let packet_slice = &data[offset..offset + packet_length];
+        packet.append_from_slice(&packet_slice);
+        guard.send_packet(packet, FLAG_ACK | FLAG_PSH);
+        guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(packet_length as u32);
+        guard.retransmit_queue.append_from_slice(&packet_slice);
+        offset += packet_length;
+
+        if guard.retransmit_timer_id == -1 {
+            let socket_arc = socket.clone();
+            guard.retransmit_timer_id = timer::set_timer(RETRANSMIT_INTERVAL, move || {
+                retransmit(socket_arc);
+            });
+        }
     }
+
+    assert!(offset == data.len());
 
     data.len() as i32
 }
@@ -220,7 +249,6 @@ fn retransmit(socket: SocketReference) {
         println!("Retransmitting sequence {}", guard.next_transmit_seq);
         let mut packet = buf::NetBuffer::new();
         packet.append_from_buffer(&guard.retransmit_queue, TCP_MTU);
-        util::print_binary(packet.header());
         guard.send_packet(packet, FLAG_ACK | FLAG_PSH);
         let socket_clone = socket.clone();
         guard.retransmit_timer_id = timer::set_timer(RETRANSMIT_INTERVAL, move || {
@@ -451,13 +479,6 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         } else {
             guard.next_transmit_seq.wrapping_add(1)
         };
-
-        if ack_num != expected {
-            println!(
-                "{}: Unexpected ack {} expected {}",
-                guard, ack_num, expected
-            );
-        }
     }
 
     if guard.response_timer_id != -1 {
@@ -530,6 +551,12 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         }
     }
 
+    let new_transmit_window = ack_num.wrapping_add(remote_window_size as u32);
+    if util::seq_gt(new_transmit_window, guard.transmit_window_max) {
+        guard.transmit_window_max = new_transmit_window;
+        cond.notify_all(); // Wake up writers waiting for window to open.
+    }
+
     match guard.state {
         TCPState::SynSent => {
             if (flags & FLAG_ACK) != 0 {
@@ -556,6 +583,9 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                 cond.notify_all();
             }
 
+            // XXX this also needs to happen during shutdown when we may not be
+            // in the established state. But we need to account for FIN consuming
+            // a sequence number.
             if (flags & FLAG_ACK) != 0 {
                 let oldest_unacked = guard
                     .next_transmit_seq
@@ -575,8 +605,6 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                         guard.retransmit_timer_id = -1;
                     }
                 }
-
-                guard.transmit_window_max = ack_num.wrapping_add(remote_window_size as u32);
             }
         }
 
