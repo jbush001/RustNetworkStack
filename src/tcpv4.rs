@@ -85,24 +85,28 @@ pub struct TCPReassembler {
     out_of_order: Vec<(u32, buf::NetBuffer)>,
 }
 
+type SocketReference = Arc<Mutex<TCPSocket>>;
+type PortMap = HashMap<SocketKey, SocketReference>;
+
 lazy_static! {
-    static ref PORT_MAP: Mutex<HashMap<SocketKey, Arc<Mutex<TCPSocket>>>> = Mutex::new(HashMap::new());
+    static ref PORT_MAP: Mutex<PortMap> = Mutex::new(HashMap::new());
 
     // This is not ideal, as it wakes up all threads waiting for data any time there
     // is actitiy on any socket. But we get into all kinds of reference/ownership
-    // complexity if we try to associate a condition with each socket.
+    // complexity if we try to associate a condition with each socket. Specifically,
+    // the condition is shared, which requires it to be reference counted, but it's
+    // not possible to access an Arc referenced object without a Mutex, but holding
+    // a mutex across a condition wait breaks it.
+    // I think this is a part of Rust that is oversimplistic.
     static ref RECV_WAIT: Condvar = Condvar::new();
 }
 
 /// Generate a random ephemeral port that doesn't conflict with any open sockets.
-fn get_ephemeral_port(remote_ip: util::IPv4Addr, remote_port: u16) -> u16 {
+fn get_ephemeral_port(guard: &mut MutexGuard<PortMap>, remote_ip: util::IPv4Addr, remote_port: u16) -> u16 {
     loop {
         const RANGE: u16 = 0xffff - EPHEMERAL_PORT_BASE;
         let port = EPHEMERAL_PORT_BASE + (rand::random::<u16>() % RANGE);
-        if !PORT_MAP
-            .lock()
-            .unwrap()
-            .contains_key(&(remote_ip, remote_port, port))
+        if !guard.contains_key(&(remote_ip, remote_port, port))
         {
             return port;
         }
@@ -112,24 +116,24 @@ fn get_ephemeral_port(remote_ip: util::IPv4Addr, remote_port: u16) -> u16 {
 pub fn tcp_open(
     remote_ip: util::IPv4Addr,
     remote_port: u16,
-) -> Result<Arc<Mutex<TCPSocket>>, &'static str> {
-    let local_port = get_ephemeral_port(remote_ip, remote_port);
-    let handle = Arc::new(Mutex::new(TCPSocket::new(
+) -> Result<SocketReference, &'static str> {
+
+    let mut portmap_guard = PORT_MAP.lock().unwrap();
+    let local_port = get_ephemeral_port(&mut portmap_guard, remote_ip, remote_port);
+    let socket = Arc::new(Mutex::new(TCPSocket::new(
         remote_ip,
         remote_port,
         local_port,
     )));
 
-    PORT_MAP
-        .lock()
-        .unwrap()
-        .insert((remote_ip, remote_port, local_port), handle.clone());
+    portmap_guard.insert((remote_ip, remote_port, local_port), socket.clone());
+    drop(portmap_guard);
 
-    let mut guard = handle.lock().unwrap();
+    let mut guard = socket.lock().unwrap();
     guard.set_state(TCPState::SynSent);
 
     guard.send_packet(buf::NetBuffer::new(), FLAG_SYN);
-    set_response_timer(&mut guard, handle.clone());
+    set_response_timer(&mut guard, socket.clone());
 
     // Wait until this is connected
     while !matches!(guard.state, TCPState::Established) {
@@ -141,10 +145,10 @@ pub fn tcp_open(
 
     std::mem::drop(guard);
 
-    Ok(handle)
+    Ok(socket)
 }
 
-pub fn tcp_close(socket: &mut Arc<Mutex<TCPSocket>>) {
+pub fn tcp_close(socket: &mut SocketReference) {
     let mut guard = socket.lock().unwrap();
 
     println!("{} tcp_close: state {:?}", guard, guard.state);
@@ -165,7 +169,7 @@ pub fn tcp_close(socket: &mut Arc<Mutex<TCPSocket>>) {
     }
 }
 
-pub fn tcp_read(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
+pub fn tcp_read(socket: &mut SocketReference, data: &mut [u8]) -> i32 {
     let mut guard = socket.lock().unwrap();
     loop {
         if !matches!(guard.state, TCPState::Established) && guard.receive_queue.len() == 0 {
@@ -182,7 +186,7 @@ pub fn tcp_read(socket: &mut Arc<Mutex<TCPSocket>>, data: &mut [u8]) -> i32 {
     }
 }
 
-pub fn tcp_write(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) -> i32 {
+pub fn tcp_write(socket: &mut SocketReference, data: &[u8]) -> i32 {
     assert!(data.len() < TCP_MTU); // XXX Fix this at some point
 
     let mut guard = socket.lock().unwrap();
@@ -207,21 +211,21 @@ pub fn tcp_write(socket: &mut Arc<Mutex<TCPSocket>>, data: &[u8]) -> i32 {
     data.len() as i32
 }
 
-fn retransmit(handle: Arc<Mutex<TCPSocket>>) {
-    let mut socket = handle.lock().unwrap();
-    if matches!(socket.state, TCPState::Closed) {
+fn retransmit(socket: SocketReference) {
+    let mut guard = socket.lock().unwrap();
+    if matches!(guard.state, TCPState::Closed) {
         return;
     }
 
-    if socket.retransmit_queue.len() > 0 {
-        println!("Retransmitting sequence {}", socket.next_transmit_seq);
+    if guard.retransmit_queue.len() > 0 {
+        println!("Retransmitting sequence {}", guard.next_transmit_seq);
         let mut packet = buf::NetBuffer::new();
-        packet.append_from_buffer(&socket.retransmit_queue, TCP_MTU);
+        packet.append_from_buffer(&guard.retransmit_queue, TCP_MTU);
         util::print_binary(packet.header());
-        socket.send_packet(packet, FLAG_ACK | FLAG_PSH);
-        let socket_arc = handle.clone();
-        socket.retransmit_timer_id = timer::set_timer(RETRANSMIT_INTERVAL, move || {
-            retransmit(socket_arc);
+        guard.send_packet(packet, FLAG_ACK | FLAG_PSH);
+        let socket_clone = socket.clone();
+        guard.retransmit_timer_id = timer::set_timer(RETRANSMIT_INTERVAL, move || {
+            retransmit(socket_clone);
         });
     }
 }
@@ -429,14 +433,14 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         return;
     }
 
-    let sockref = pm_entry
+    let socket = pm_entry
         .expect("just checked if pm_entry is none above")
         .clone();
-    let mut socket = sockref.lock().unwrap();
+    let mut guard = socket.lock().unwrap();
 
     println!(
         "{}: tcp_input: flags {} seq {} ack {} window {} ({} bytes of data)",
-        socket,
+        guard,
         flags_to_str(flags),
         seq_num,
         ack_num,
@@ -444,104 +448,104 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         packet.len()
     );
     if flags & FLAG_ACK != 0 {
-        let expected = if matches!(socket.state, TCPState::Established) {
-            socket.next_transmit_seq
+        let expected = if matches!(guard.state, TCPState::Established) {
+            guard.next_transmit_seq
         } else {
-            socket.next_transmit_seq.wrapping_add(1)
+            guard.next_transmit_seq.wrapping_add(1)
         };
 
         if ack_num != expected {
             println!(
                 "{}: Unexpected ack {} expected {}",
-                socket,
+                guard,
                 ack_num,
                 expected
             );
         }
     }
 
-    if socket.response_timer_id != -1 {
-        timer::cancel_timer(socket.response_timer_id);
-        socket.response_timer_id = -1;
+    if guard.response_timer_id != -1 {
+        timer::cancel_timer(guard.response_timer_id);
+        guard.response_timer_id = -1;
     }
 
     if (flags & FLAG_RST) != 0 {
-        println!("{}: Connection reset", socket);
-        socket.set_state(TCPState::Closed);
+        println!("{}: Connection reset", guard);
+        guard.set_state(TCPState::Closed);
         RECV_WAIT.notify_all();
         return;
     }
 
     if packet.len() > 0 {
         // Handle received data
-        socket.highest_seq_received = std::cmp::max(
-            socket.highest_seq_received,
+        guard.highest_seq_received = std::cmp::max(
+            guard.highest_seq_received,
             seq_num.wrapping_add(packet.len() as u32),
         );
-        let got = socket.reassembler.add_packet(packet, seq_num);
+        let got = guard.reassembler.add_packet(packet, seq_num);
         if let Some(socketdata) = got {
-            socket.receive_queue.append_buffer(socketdata);
+            guard.receive_queue.append_buffer(socketdata);
             RECV_WAIT.notify_all();
         }
 
-        if matches!(socket.state, TCPState::Established) {
-            socket.num_delayed_acks += 1;
-            if socket.num_delayed_acks >= MAX_DELAYED_ACKS || (flags & FLAG_FIN) != 0 {
+        if matches!(guard.state, TCPState::Established) {
+            guard.num_delayed_acks += 1;
+            if guard.num_delayed_acks >= MAX_DELAYED_ACKS || (flags & FLAG_FIN) != 0 {
                 println!(
                     "{}: Sending immediate ack, num_delayed_acks={}",
-                    socket,
-                    socket.num_delayed_acks
+                    guard,
+                    guard.num_delayed_acks
                 );
-                socket.num_delayed_acks = 0;
-                if socket.delayed_ack_timer_id != -1 {
-                    timer::cancel_timer(socket.delayed_ack_timer_id);
-                    socket.delayed_ack_timer_id = -1;
+                guard.num_delayed_acks = 0;
+                if guard.delayed_ack_timer_id != -1 {
+                    timer::cancel_timer(guard.delayed_ack_timer_id);
+                    guard.delayed_ack_timer_id = -1;
                 }
 
-                socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
-            } else if socket.delayed_ack_timer_id == -1 {
-                println!("{}: Starting delayed ack timer", socket);
-                let socket_arc = sockref.clone();
-                socket.delayed_ack_timer_id = timer::set_timer(MAX_ACK_DELAY, move || {
-                    let mut socket = socket_arc.lock().unwrap();
-                    if matches!(socket.state, TCPState::Closed) {
+                guard.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+            } else if guard.delayed_ack_timer_id == -1 {
+                println!("{}: Starting delayed ack timer", guard);
+                let socket_clone = socket.clone();
+                guard.delayed_ack_timer_id = timer::set_timer(MAX_ACK_DELAY, move || {
+                    let mut guard = socket_clone.lock().unwrap();
+                    if matches!(guard.state, TCPState::Closed) {
                         return;
                     }
 
-                    println!("{}: Sending delayed ack", socket);
-                    socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
-                    socket.delayed_ack_timer_id = -1;
-                    socket.num_delayed_acks = 0;
+                    println!("{}: Sending delayed ack", guard);
+                    guard.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+                    guard.delayed_ack_timer_id = -1;
+                    guard.num_delayed_acks = 0;
                 });
             } else {
                 println!(
                     "{}: Deferring ack, count is now {}",
-                    socket,
-                    socket.num_delayed_acks
+                    guard,
+                    guard.num_delayed_acks
                 );
             }
         } else {
-            if socket.delayed_ack_timer_id != -1 {
-                timer::cancel_timer(socket.delayed_ack_timer_id);
-                socket.delayed_ack_timer_id = -1;
+            if guard.delayed_ack_timer_id != -1 {
+                timer::cancel_timer(guard.delayed_ack_timer_id);
+                guard.delayed_ack_timer_id = -1;
             }
 
-            socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+            guard.send_packet(buf::NetBuffer::new(), FLAG_ACK);
         }
     }
 
-    match socket.state {
+    match guard.state {
         TCPState::SynSent => {
             if (flags & FLAG_ACK) != 0 {
-                socket.set_state(TCPState::Established);
-                socket.reassembler.set_next_expect(seq_num + 1);
+                guard.set_state(TCPState::Established);
+                guard.reassembler.set_next_expect(seq_num + 1);
 
                 // The SYN consumes a sequence number.
-                socket.next_transmit_seq = socket.next_transmit_seq.wrapping_add(1);
+                guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(1);
 
                 // Send ack to complete handshake
-                socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
-                set_response_timer(&mut socket, sockref.clone());
+                guard.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+                set_response_timer(&mut guard, socket.clone());
 
                 // Wake up thread waiting in connect
                 RECV_WAIT.notify_all();
@@ -550,80 +554,80 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
 
         TCPState::Established => {
             if (flags & FLAG_FIN) != 0 {
-                socket.set_state(TCPState::CloseWait);
+                guard.set_state(TCPState::CloseWait);
 
                 // Ack will be sent below. FIN packets can contain data.
                 RECV_WAIT.notify_all();
             }
 
             if (flags & FLAG_ACK) != 0 {
-                let oldest_unacked = socket
+                let oldest_unacked = guard
                     .next_transmit_seq
-                    .wrapping_sub(socket.retransmit_queue.len() as u32);
+                    .wrapping_sub(guard.retransmit_queue.len() as u32);
                 if util::seq_gt(ack_num, oldest_unacked) {
                     let trim = ack_num.wrapping_sub(oldest_unacked) as usize;
-                    socket.retransmit_queue.trim_head(trim);
+                    guard.retransmit_queue.trim_head(trim);
                     println!(
                         "{}: Trimming {} acked bytes from retransmit queue, size is now {}",
-                        socket,
+                        guard,
                         trim,
-                        socket.retransmit_queue.len()
+                        guard.retransmit_queue.len()
                     );
 
-                    if socket.retransmit_queue.len() == 0 {
-                        timer::cancel_timer(socket.retransmit_timer_id);
-                        socket.retransmit_timer_id = -1;
+                    if guard.retransmit_queue.len() == 0 {
+                        timer::cancel_timer(guard.retransmit_timer_id);
+                        guard.retransmit_timer_id = -1;
                     }
                 }
 
-                socket.transmit_window_max = ack_num.wrapping_add(remote_window_size as u32);
+                guard.transmit_window_max = ack_num.wrapping_add(remote_window_size as u32);
             }
         }
 
         TCPState::LastAck => {
             if (flags & FLAG_ACK) != 0 {
-                socket.set_state(TCPState::Closed);
+                guard.set_state(TCPState::Closed);
             }
         }
 
         TCPState::FinWait1 => {
             if (flags & FLAG_ACK != 0)
                 && (flags & FLAG_FIN != 0)
-                && ack_num == socket.next_transmit_seq.wrapping_add(1)
+                && ack_num == guard.next_transmit_seq.wrapping_add(1)
             {
-                socket.set_state(TCPState::TimeWait);
-                let sockrefclone = sockref.clone();
+                guard.set_state(TCPState::TimeWait);
+                let socket_clone = socket.clone();
                 timer::set_timer(TIME_WAIT_TIMEOUT, move || {
-                    time_wait_timeout(sockrefclone);
+                    time_wait_timeout(socket_clone);
                 });
             } else if (flags & FLAG_FIN) != 0 {
-                socket.set_state(TCPState::Closing);
-                socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
-                set_response_timer(&mut socket, sockref.clone());
-            } else if (flags & FLAG_ACK) != 0 && ack_num == socket.next_transmit_seq.wrapping_add(1)
+                guard.set_state(TCPState::Closing);
+                guard.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+                set_response_timer(&mut guard, socket.clone());
+            } else if (flags & FLAG_ACK) != 0 && ack_num == guard.next_transmit_seq.wrapping_add(1)
             {
-                socket.set_state(TCPState::FinWait2);
+                guard.set_state(TCPState::FinWait2);
             }
         }
 
         TCPState::FinWait2 => {
             if (flags & FLAG_FIN) != 0 {
-                socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
-                set_response_timer(&mut socket, sockref.clone());
-                socket.set_state(TCPState::TimeWait);
-                let sockrefclone = sockref.clone();
+                guard.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+                set_response_timer(&mut guard, socket.clone());
+                guard.set_state(TCPState::TimeWait);
+                let socket_clone = socket.clone();
                 timer::set_timer(TIME_WAIT_TIMEOUT, move || {
-                    time_wait_timeout(sockrefclone);
+                    time_wait_timeout(socket_clone);
                 });
             }
         }
 
         TCPState::Closing => {
             if (flags & FLAG_ACK) != 0 {
-                socket.set_state(TCPState::TimeWait);
-                let sockrefclone = sockref.clone();
+                guard.set_state(TCPState::TimeWait);
+                let socket_clone = socket.clone();
                 timer::set_timer(TIME_WAIT_TIMEOUT, move || {
-                    time_wait_timeout(sockrefclone);
+                    time_wait_timeout(socket_clone);
                 });
             }
         }
@@ -631,8 +635,8 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         _ => {
             println!(
                 "{}: Received packet in state: {:?}",
-                socket,
-                socket.state
+                guard,
+                guard.state
             );
         }
     }
@@ -679,76 +683,77 @@ pub fn tcp_output(
     ipv4::ip_output(packet, ipv4::PROTO_TCP, dest_ip);
 }
 
-fn set_response_timer(socket: &mut MutexGuard<TCPSocket>, handle: Arc<Mutex<TCPSocket>>) {
-    if socket.response_timer_id != -1 {
-        timer::cancel_timer(socket.response_timer_id);
+fn set_response_timer(guard: &mut MutexGuard<TCPSocket>, socket: SocketReference) {
+    if guard.response_timer_id != -1 {
+        timer::cancel_timer(guard.response_timer_id);
     }
 
-    socket.response_timer_id = timer::set_timer(RESPONSE_TIMEOUT, move || {
-        response_timeout(handle.clone());
+    let socket_clone = socket.clone();
+    guard.response_timer_id = timer::set_timer(RESPONSE_TIMEOUT, move || {
+        response_timeout(socket_clone);
     });
 }
 
-fn response_timeout(sockref: Arc<Mutex<TCPSocket>>) {
-    let mut socket = sockref.lock().unwrap();
+fn response_timeout(socket: SocketReference) {
+    let mut guard = socket.lock().unwrap();
 
-    if socket.request_retry_count >= MAX_RETRIES {
+    if guard.request_retry_count >= MAX_RETRIES {
         println!(
             "{}: Too many response timeouts in state {:?}, closing",
-            socket,
-            socket.state
+            guard,
+            guard.state
         );
-        socket.set_state(TCPState::Closed);
+        guard.set_state(TCPState::Closed);
         RECV_WAIT.notify_all();
         return;
     }
 
     println!(
         "{}: Response timeout state {:?}",
-        socket,
-        socket.state
+        guard,
+        guard.state
     );
-    match socket.state {
+    match guard.state {
         TCPState::Closed | TCPState::Established => {
             // This can occur if the timer fires as the connection state
             // transitions.
         }
 
         TCPState::SynSent => {
-            socket.send_packet(buf::NetBuffer::new(), FLAG_SYN);
-            set_response_timer(&mut socket, sockref.clone());
+            guard.send_packet(buf::NetBuffer::new(), FLAG_SYN);
+            set_response_timer(&mut guard, socket.clone());
         }
 
         TCPState::FinWait1 | TCPState::LastAck => {
-            socket.send_packet(buf::NetBuffer::new(), FLAG_FIN);
-            set_response_timer(&mut socket, sockref.clone());
+            guard.send_packet(buf::NetBuffer::new(), FLAG_FIN);
+            set_response_timer(&mut guard, socket.clone());
         }
 
         TCPState::Closing | TCPState::CloseWait => {
-            socket.send_packet(buf::NetBuffer::new(), FLAG_ACK);
-            set_response_timer(&mut socket, sockref.clone());
+            guard.send_packet(buf::NetBuffer::new(), FLAG_ACK);
+            set_response_timer(&mut guard, socket.clone());
         }
 
         _ => {
             // This would indicate a bug: we set a timer where we shoudn't have.
             panic!(
                 "{}: unexpected state in response_timeout: {:?}",
-                socket,
-                socket.state
+                guard,
+                guard.state
             );
         }
     }
 
-    set_response_timer(&mut socket, sockref.clone());
+    set_response_timer(&mut guard, socket.clone());
 }
 
-fn time_wait_timeout(handle: Arc<Mutex<TCPSocket>>) {
-    let mut socket = handle.lock().unwrap();
-    socket.set_state(TCPState::Closed);
-    let remote_ip = socket.remote_ip;
-    let remote_port = socket.remote_port;
-    let local_port = socket.local_port;
-    drop(socket); // Unlock to avoid deadlock
+fn time_wait_timeout(socket: SocketReference) {
+    let mut guard = socket.lock().unwrap();
+    guard.set_state(TCPState::Closed);
+    let remote_ip = guard.remote_ip;
+    let remote_port = guard.remote_port;
+    let local_port = guard.local_port;
+    drop(guard); // Unlock to avoid deadlock
     PORT_MAP
         .lock()
         .unwrap()
