@@ -123,20 +123,20 @@ fn test_tcp_upload() {
 
     // Write a chargen pattern into the buffer
     // Each line is 72 ASCII characters along with a CR/LF
-    let LINE_LENGTH = 74;
-    let PATTERN_LENGTH = 95;
-    for i in 0..data.len() {
-        let line_num = i / LINE_LENGTH;
-        let line_offset = i % LINE_LENGTH;
-        let start_char = line_num % PATTERN_LENGTH;
+    let line_length = 74;
+    let pattern_length = 95;
+    for (i, elem) in data.iter_mut().enumerate() {
+        let line_num = i / line_length;
+        let line_offset = i % line_length;
+        let start_char = line_num % pattern_length;
 
-        if line_offset == LINE_LENGTH - 2 {
-            data[i] = '\r' as u8;
-        } else if line_offset == LINE_LENGTH - 1 {
-            data[i] = '\n' as u8;
+        *elem = if line_offset == line_length - 2 {
+            b'\r'
+        } else if line_offset == line_length - 1 {
+            b'\n'
         } else {
-            data[i] = ((start_char + line_offset) % PATTERN_LENGTH + 32) as u8;
-        }
+            ((start_char + line_offset) % pattern_length + 32) as u8
+        };
     }
 
     tcpv4::tcp_write(&mut socket, &data);

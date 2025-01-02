@@ -218,10 +218,10 @@ pub fn tcp_write(socket: &mut SocketReference, data: &[u8]) -> i32 {
 
         let mut packet = buf::NetBuffer::new();
         let packet_slice = &data[offset..offset + packet_length];
-        packet.append_from_slice(&packet_slice);
+        packet.append_from_slice(packet_slice);
         guard.send_packet(packet, FLAG_ACK | FLAG_PSH);
         guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(packet_length as u32);
-        guard.retransmit_queue.append_from_slice(&packet_slice);
+        guard.retransmit_queue.append_from_slice(packet_slice);
         offset += packet_length;
 
         if guard.retransmit_timer_id == -1 {
@@ -473,13 +473,6 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         remote_window_size,
         packet.len()
     );
-    if flags & FLAG_ACK != 0 {
-        let expected = if matches!(guard.state, TCPState::Established) {
-            guard.next_transmit_seq
-        } else {
-            guard.next_transmit_seq.wrapping_add(1)
-        };
-    }
 
     if guard.response_timer_id != -1 {
         timer::cancel_timer(guard.response_timer_id);
