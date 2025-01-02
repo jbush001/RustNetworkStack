@@ -38,10 +38,12 @@ use std::sync::Mutex;
 ///   many protocols).
 ///
 
-const FRAGMENT_SIZE: usize = 512;
 type FragPointer = Option<Box<BufferFragment>>;
 
 // This is the publicly visible abstraction for clients of this API.
+// XXX ideally this would also have a pointer to the tail frag, to avoid
+// having to walk the list to find it, but that's tricky given Rust's
+// ownership model.
 pub struct NetBuffer {
     fragments: FragPointer, // Head of linked list of fragments
 
@@ -49,13 +51,11 @@ pub struct NetBuffer {
     // (data_end - data_start for each). I maintain this separately to
     // speed up calls to get the length.
     length: usize,
-
-    // XXX ideally this would also have a pointer to the tail frag, to avoid
-    // having to walk the list to find it, but that's tricky given Rust's
-    // ownership model.
 }
 
-/// Portion of a buffer, which represents a node in a linked list.
+const FRAGMENT_SIZE: usize = 512;
+
+/// Portion of a buffer, which is a node in a linked list.
 struct BufferFragment {
     data: [u8; FRAGMENT_SIZE],
     data_start: usize, // Offset into data array of first valid byte of data.
@@ -68,6 +68,9 @@ pub struct BufferIterator<'a> {
     remaining: usize, // How many more bytes to copy.
 }
 
+/// This is where fragments are allocated from (and return to). Free fragments
+/// are stored in a single linked list, which makes allocation and deallocation
+/// fast.
 struct FragmentPool {
     free_list: FragPointer,
     total_bufs: usize,
@@ -78,9 +81,12 @@ struct FragmentPool {
 const POOL_GROW_SIZE: usize = 16;
 
 lazy_static! {
-    static ref BUFFER_POOL: Mutex<FragmentPool> = Mutex::new(FragmentPool::new());
+    // There is a global singleton pool used by everything.
+    static ref FRAGMENT_POOL: Mutex<FragmentPool> = Mutex::new(FragmentPool::new());
 }
 
+/// Note that this instance is protected by an external mutex, so none of these
+/// functions are reentrant.
 impl FragmentPool {
     fn new() -> FragmentPool {
         FragmentPool {
@@ -93,6 +99,12 @@ impl FragmentPool {
 
     // Add new nodes to fragment pool. These are individually heap allocated.
     fn grow(&mut self) {
+        // When short, we stuff multiple frags into the pool. I don't know
+        // that there's a super strong argument for doing this in bulk (vs.
+        // one at a time) other than doing it this way is maybe less likely
+        // to cause heap fragmentation (vs. intermingled with other allocations).
+        // Ideally we'd allocate one big chunk and slice it up, but that is
+        // at toods with Rust's ownership model.
         for _ in 0..POOL_GROW_SIZE {
             let mut frag = Box::new(BufferFragment::new());
             frag.next = self.free_list.take();
@@ -108,6 +120,8 @@ impl FragmentPool {
     }
 
     /// Allocate a new fragment from the pool.
+    /// XXX as an optimization, could pass a parameter indicating
+    /// how many buffers are wanted.
     fn alloc(&mut self) -> Box<BufferFragment> {
         if self.free_list.is_none() {
             assert!(self.free_bufs == 0);
@@ -131,10 +145,11 @@ impl FragmentPool {
     }
 
     /// Put a fragment back into the pool.
-    /// It's still necessary to explicitly return these (vs having them
-    /// automatically return when they go out of scope). The Box class does
-    /// have an allocator parameter, but it is marked as unstable and not fully
-    /// supported.
+    /// It's still necessary to call this to explicitly return these (vs
+    /// having them automatically return when they go out of scope). The
+    /// Box class does have an allocator parameter, but it is marked as
+    /// unstable and not fully supported.
+    /// Note also that we never return fragments to the system allocator.
     fn free(&mut self, mut fragment: Box<BufferFragment>) {
         self.free_bufs += 1;
         assert!(self.free_bufs <= self.total_bufs);
@@ -144,7 +159,7 @@ impl FragmentPool {
 }
 
 pub fn print_alloc_stats() {
-    let pool = BUFFER_POOL.lock().unwrap();
+    let pool = FRAGMENT_POOL.lock().unwrap();
     println!(
         "Pool size: {} ({}k)",
         pool.total_bufs,
@@ -174,8 +189,9 @@ impl BufferFragment {
 }
 
 impl Drop for BufferFragment {
-    /// These should always to back into the pool. If this calls, it means
-    /// ownership has inadvertently been lost.
+    /// Fragments should always to back into the pool, and thus this hould
+    /// never be called. If it is, it means ownership has inadvertently been
+    /// lost (leaked)
     fn drop(&mut self) {
         panic!("BufferFragment should never be dropped");
     }
@@ -183,12 +199,12 @@ impl Drop for BufferFragment {
 
 impl Drop for NetBuffer {
     /// When a NetBuffer goes away, ensure all of its fragments go back into the
-    /// poool.
+    /// pool.
     fn drop(&mut self) {
         let mut frag = self.fragments.take();
         while frag.is_some() {
             let next = frag.as_mut().unwrap().next.take();
-            BUFFER_POOL.lock().unwrap().free(frag.unwrap());
+            FRAGMENT_POOL.lock().unwrap().free(frag.unwrap());
             frag = next;
         }
     }
@@ -212,7 +228,7 @@ impl NetBuffer {
 
         let mut to_add = length;
         while to_add > 0 {
-            let mut new_frag = BUFFER_POOL.lock().unwrap().alloc();
+            let mut new_frag = FRAGMENT_POOL.lock().unwrap().alloc();
             let frag_size = cmp::min(to_add, FRAGMENT_SIZE);
             new_frag.data_end = frag_size;
             to_add -= frag_size;
@@ -223,7 +239,8 @@ impl NetBuffer {
         buf
     }
 
-    /// Return the total available data within this buffer.
+    /// Return the total available data within this buffer
+    /// (which may be smaller than the allocated capacity)
     pub fn len(&self) -> usize {
         self.length
     }
@@ -267,7 +284,7 @@ impl NetBuffer {
         if self.fragments.is_none() || self.fragments.as_ref().unwrap().data_start < size {
             // Prepend a new frag. We place the data at the end of the frag
             // to allow space for subsequent headers to be added.
-            let mut new_head_frag = BUFFER_POOL.lock().unwrap().alloc();
+            let mut new_head_frag = FRAGMENT_POOL.lock().unwrap().alloc();
             new_head_frag.data_start = FRAGMENT_SIZE - size;
             new_head_frag.data_end = FRAGMENT_SIZE;
             new_head_frag.next = if self.fragments.is_none() {
@@ -309,7 +326,7 @@ impl NetBuffer {
             remaining -= frag_len;
             let mut dead_frag = self.fragments.take().unwrap();
             self.fragments = dead_frag.next.take();
-            BUFFER_POOL.lock().unwrap().free(dead_frag);
+            FRAGMENT_POOL.lock().unwrap().free(dead_frag);
         }
 
         // Truncate the first buffer
@@ -353,7 +370,7 @@ impl NetBuffer {
         let mut frag = last_frag.as_mut().unwrap().next.take();
         while frag.is_some() {
             let next = frag.as_mut().unwrap().next.take();
-            BUFFER_POOL.lock().unwrap().free(frag.unwrap());
+            FRAGMENT_POOL.lock().unwrap().free(frag.unwrap());
             frag = next;
         }
     }
@@ -366,7 +383,7 @@ impl NetBuffer {
 
         // Find the last frag (or, if the buffer is empty, create a new one)
         let mut last_frag = if self.fragments.is_none() {
-            self.fragments = Some(BUFFER_POOL.lock().unwrap().alloc());
+            self.fragments = Some(FRAGMENT_POOL.lock().unwrap().alloc());
             &mut self.fragments
         } else {
             let mut frag = &mut self.fragments;
@@ -386,7 +403,7 @@ impl NetBuffer {
             frag.data_end += copy_len;
             data_offset += copy_len;
             if data_offset < data.len() {
-                let new_frag = Some(BUFFER_POOL.lock().unwrap().alloc());
+                let new_frag = Some(FRAGMENT_POOL.lock().unwrap().alloc());
                 last_frag.as_mut().unwrap().next = new_frag;
                 last_frag = &mut last_frag.as_mut().unwrap().next;
             }
@@ -489,7 +506,7 @@ mod tests {
     /// flakey and fail on the no_leaks check. There is no threading in this
     /// module, so it presumably isn't timing related.
     fn no_leaks() -> bool {
-        let pool = super::BUFFER_POOL.lock().unwrap();
+        let pool = super::FRAGMENT_POOL.lock().unwrap();
         pool.free_bufs == pool.total_bufs
     }
 
