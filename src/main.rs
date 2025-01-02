@@ -35,7 +35,14 @@ fn packet_receive_thread() {
 }
 
 fn test_udp_echo() {
-    let mut socket = udpv4::udp_open(8000);
+    let result = udpv4::udp_open(8000);
+    if result.is_err() {
+        println!("Failed to open socket: {}", result.err().unwrap());
+        return;
+    }
+
+    let mut socket = result.unwrap();
+
     loop {
         let mut source_addr: util::IPv4Addr = util::IPv4Addr::new();
         let mut source_port: u16 = 0;

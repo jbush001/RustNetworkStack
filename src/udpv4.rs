@@ -28,8 +28,12 @@ pub struct UDPSocket {
     port: u16,
 }
 
+type SocketReference = Arc<(Mutex<UDPSocket>, Condvar)>;
+type PortMap = HashMap<u16, SocketReference>;
+
+
 lazy_static! {
-    static ref PORT_MAP: Mutex<HashMap<u16, Arc<Mutex<UDPSocket>>>> = Mutex::new(HashMap::new());
+    static ref PORT_MAP: Mutex<PortMap> = Mutex::new(HashMap::new());
 
     // This is not ideal, as it wakes up all threads waiting for data any time there
     // is actitiy on any socket. But we get into all kinds of reference/ownership
@@ -46,20 +50,28 @@ impl UDPSocket {
     }
 }
 
-pub fn udp_open(port: u16) -> Arc<Mutex<UDPSocket>> {
+pub fn udp_open(port: u16) -> Result<SocketReference, &'static str> {
+    let mut port_map_guard = PORT_MAP.lock().unwrap();
+    if port_map_guard.contains_key(&port) {
+        return Err("Port already in use");
+    }
+
     let socket = UDPSocket::new(port);
-    let handle = Arc::new(Mutex::new(socket));
-    PORT_MAP.lock().unwrap().insert(port, handle.clone());
-    handle
+    let socket = Arc::new((Mutex::new(socket), Condvar::new()));
+    port_map_guard.insert(port, socket.clone());
+
+    Ok(socket)
 }
 
 pub fn udp_recv(
-    socket: &mut Arc<Mutex<UDPSocket>>,
+    socket: &mut SocketReference,
     data: &mut [u8],
     out_addr: &mut util::IPv4Addr,
     out_port: &mut u16,
 ) -> i32 {
-    let mut guard = socket.lock().unwrap();
+    let (mutex, cond) = &**socket;
+    let mut guard = mutex.lock().unwrap();
+
     loop {
         let entry = guard.receive_queue.pop_front();
         if entry.is_some() {
@@ -73,17 +85,19 @@ pub fn udp_recv(
         }
 
         // Need to wait for data
-        guard = RECV_WAIT.wait(guard).unwrap();
+        guard = cond.wait(guard).unwrap();
     }
 }
 
 pub fn udp_send(
-    socket: &mut Arc<Mutex<UDPSocket>>,
+    socket: &mut SocketReference,
     dest_addr: util::IPv4Addr,
     dest_port: u16,
     data: &[u8],
 ) {
-    let guard = socket.lock().unwrap();
+    let (mutex, _cond) = &**socket;
+    let guard = mutex.lock().unwrap();
+
     let mut packet = buf::NetBuffer::new();
     packet.append_from_slice(data);
     udp_output(packet, dest_addr, guard.port, dest_port);
@@ -105,19 +119,21 @@ pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
     packet.trim_head(UDP_HEADER_LEN);
 
     let mut port_map_guard = PORT_MAP.lock().unwrap();
-    let socket = port_map_guard.get_mut(&dest_port);
-    if socket.is_none() {
+    let pm_entry = port_map_guard.get_mut(&dest_port);
+    if pm_entry.is_none() {
         println!("No socket listening on port {}", dest_port);
         return;
     }
 
-    socket
-        .unwrap()
-        .lock()
-        .unwrap()
-        .receive_queue
-        .push_back((source_addr, source_port, packet));
-    RECV_WAIT.notify_all();
+    let socket = pm_entry
+        .expect("just checked if pm_entry is none above")
+        .clone();
+    let (mutex, cond) = &*socket;
+    let mut guard = mutex.lock().unwrap();
+
+    guard.receive_queue.push_back((source_addr, source_port, packet));
+
+    cond.notify_all();
 }
 
 fn udp_output(
