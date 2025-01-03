@@ -460,6 +460,7 @@ impl<'a> Iterator for BufferIterator<'a> {
 #[cfg(test)]
 mod tests {
     use mark_flaky_tests::*;
+    use super::*;
 
     // Walk through the buffer to ensure it is correctly formed.
     fn validate_buffer(buf: &super::NetBuffer) {
@@ -480,8 +481,7 @@ mod tests {
     /// flakey and fail on the no_leaks check. There is no threading in this
     /// module, so it presumably isn't timing related.
     fn no_leaks() -> bool {
-        let pool = super::FRAGMENT_POOL.lock().unwrap();
-        pool.free_bufs == pool.total_bufs
+        util::STATS.buffers_allocated.get() == util::STATS.buffers_freed.get()
     }
 
     #[flaky]
