@@ -319,6 +319,18 @@ impl NetBuffer {
 
         assert!(size <= self.len());
 
+        if size == self.len() {
+            // Remove all data
+            let mut guard = FRAGMENT_POOL.lock().unwrap();
+            while let Some(mut dead_frag) = self.fragments.take() {
+                self.fragments = dead_frag.next.take();
+                guard.free(dead_frag);
+            }
+
+            self.length = 0;
+            return;
+        }
+
         self.length = self.len() - size;
         let mut remaining = self.length;
 
@@ -468,7 +480,8 @@ mod tests {
         let mut actual_length = 0;
         while ptr.is_some() {
             let frag = ptr.as_ref().unwrap();
-            assert!(frag.data_start <= frag.data_end);
+            // Should be non-empty and these shouldn't cross
+            assert!(frag.data_start < frag.data_end);
             assert!(frag.data_end <= super::FRAGMENT_SIZE);
             actual_length += frag.data_end - frag.data_start;
             ptr = &frag.next;
