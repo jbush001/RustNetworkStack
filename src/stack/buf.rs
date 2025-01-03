@@ -176,9 +176,10 @@ impl Drop for NetBuffer {
     /// pool.
     fn drop(&mut self) {
         let mut frag = self.fragments.take();
+        let mut guard = FRAGMENT_POOL.lock().unwrap();
         while frag.is_some() {
             let next = frag.as_mut().unwrap().next.take();
-            FRAGMENT_POOL.lock().unwrap().free(frag.unwrap());
+            guard.free(frag.unwrap());
             frag = next;
         }
     }
@@ -201,8 +202,9 @@ impl NetBuffer {
         };
 
         let mut to_add = length;
+        let mut guard = FRAGMENT_POOL.lock().unwrap();
         while to_add > 0 {
-            let mut new_frag = FRAGMENT_POOL.lock().unwrap().alloc();
+            let mut new_frag = guard.alloc();
             let frag_size = cmp::min(to_add, FRAGMENT_SIZE);
             new_frag.data_end = frag_size;
             to_add -= frag_size;
@@ -291,7 +293,8 @@ impl NetBuffer {
         let mut remaining = size;
 
         // Remove entire buffers if needed
-        while remaining > 0 && self.fragments.is_some() {
+        let mut guard = FRAGMENT_POOL.lock().unwrap();
+        while remaining > 0 {
             let frag_len = self.fragments.as_ref().unwrap().len();
             if frag_len > remaining {
                 break;
@@ -300,7 +303,7 @@ impl NetBuffer {
             remaining -= frag_len;
             let mut dead_frag = self.fragments.take().unwrap();
             self.fragments = dead_frag.next.take();
-            FRAGMENT_POOL.lock().unwrap().free(dead_frag);
+            guard.free(dead_frag);
         }
 
         // Truncate the first buffer
@@ -354,9 +357,10 @@ impl NetBuffer {
 
         // Free any fragments that come after last_frag
         let mut frag = last_frag.as_mut().unwrap().next.take();
+        let mut guard = FRAGMENT_POOL.lock().unwrap();
         while frag.is_some() {
             let next = frag.as_mut().unwrap().next.take();
-            FRAGMENT_POOL.lock().unwrap().free(frag.unwrap());
+            guard.free(frag.unwrap());
             frag = next;
         }
     }
@@ -368,8 +372,9 @@ impl NetBuffer {
         }
 
         // Find the last frag (or, if the buffer is empty, create a new one)
+        let mut guard = FRAGMENT_POOL.lock().unwrap();
         let mut last_frag = if self.fragments.is_none() {
-            self.fragments = Some(FRAGMENT_POOL.lock().unwrap().alloc());
+            self.fragments = Some(guard.alloc());
             &mut self.fragments
         } else {
             let mut frag = &mut self.fragments;
@@ -389,7 +394,7 @@ impl NetBuffer {
             frag.data_end += copy_len;
             data_offset += copy_len;
             if data_offset < data.len() {
-                let new_frag = Some(FRAGMENT_POOL.lock().unwrap().alloc());
+                let new_frag = Some(guard.alloc());
                 last_frag.as_mut().unwrap().next = new_frag;
                 last_frag = &mut last_frag.as_mut().unwrap().next;
             }
@@ -403,20 +408,14 @@ impl NetBuffer {
     pub fn copy_to_slice(&self, dest: &mut [u8]) -> usize {
         let mut copied = 0;
         let mut iter = self.iter(usize::MAX);
-        while copied < dest.len() {
-            let next = iter.next();
-            if next.is_none() {
-                break;
-            }
-
-            let slice = next.unwrap();
-            let copy_len = cmp::min(slice.len(), dest.len() - copied);
+        let total_to_copy = cmp::min(dest.len(), self.len());
+        while copied < total_to_copy {
+            let slice = iter.next().unwrap();
+            let copy_len = cmp::min(slice.len(), total_to_copy - copied);
             dest[copied..copied + copy_len].copy_from_slice(&slice[..copy_len]);
             copied += copy_len;
         }
 
-        assert!(copied <= self.length);
-        assert!(copied <= dest.len());
         assert!(copied == self.length || copied == dest.len());
         assert!(copied != self.len() || iter.next().is_none());
 
