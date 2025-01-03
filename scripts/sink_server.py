@@ -41,6 +41,7 @@ while True:
 
             print(data.decode('utf-8'), end='')
 
+        print('\nSocket closed')
         client_conn.close()
     except BrokenPipeError:
         client_conn.close()

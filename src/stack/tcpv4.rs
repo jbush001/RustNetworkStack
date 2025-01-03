@@ -351,6 +351,13 @@ impl TCPSocket {
         self.state = new_state;
         self.request_retry_count = 0;
     }
+
+    fn is_established(&self) -> bool  {
+        return !matches!(
+            self.state,
+            TCPState::Closed | TCPState::SynSent | TCPState::TimeWait
+        );
+    }
 }
 
 impl Display for TCPSocket {
@@ -490,7 +497,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
 
     if packet.len() > 0 {
         // Handle received data
-        guard.highest_seq_received = std::cmp::max(
+        guard.highest_seq_received = util::wrapping_max(
             guard.highest_seq_received,
             seq_num.wrapping_add(packet.len() as u32),
         );
@@ -546,17 +553,21 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         }
     }
 
-    let new_transmit_window = ack_num.wrapping_add(remote_window_size as u32);
-    if util::seq_gt(new_transmit_window, guard.transmit_window_max) {
-        guard.transmit_window_max = new_transmit_window;
-        cond.notify_all(); // Wake up writers waiting for window to open.
+    if (flags & FLAG_ACK) != 0 && guard.is_established() {
+        let new_transmit_window = ack_num.wrapping_add(remote_window_size as u32);
+        if util::seq_gt(new_transmit_window, guard.transmit_window_max) {
+            guard.transmit_window_max = new_transmit_window;
+            cond.notify_all(); // Wake up writers waiting for window to open.
+        }
     }
 
     match guard.state {
         TCPState::SynSent => {
             if (flags & FLAG_ACK) != 0 {
                 guard.set_state(TCPState::Established);
-                guard.reassembler.set_next_expect(seq_num + 1);
+                guard.highest_seq_received = seq_num.wrapping_add(1);
+                guard.reassembler.set_next_expect(seq_num.wrapping_add(1));
+                guard.transmit_window_max = ack_num.wrapping_add(remote_window_size as u32);
 
                 // The SYN consumes a sequence number.
                 guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(1);

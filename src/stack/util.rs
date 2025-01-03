@@ -123,6 +123,10 @@ pub fn seq_gt(val1: u32, val2: u32) -> bool {
     diff < 0x80000000 && diff != 0
 }
 
+pub fn wrapping_max(val1: u32, val2: u32) -> u32 {
+    if seq_gt(val1, val2) { val1 } else { val2 }
+}
+
 pub struct PerfCounter(AtomicU32);
 
 impl PerfCounter {
