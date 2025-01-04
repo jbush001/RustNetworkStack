@@ -32,5 +32,9 @@ path = "src/test_apps/tcp_bulk_upload.rs"
 name = "buf_bench"
 harness = false
 
+[[bench]]
+name = "util_bench"
+harness = false
+
 [build]
 script = "build.rs"

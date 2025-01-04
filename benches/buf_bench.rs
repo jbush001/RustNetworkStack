@@ -21,19 +21,19 @@
 // a lot of memory. So we need to pair allocations with deallocations, which
 // makes it difficult to isolate individual calls.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use netstack::buf;
 
 // A baseline of sorts that we can compare other calls to. Allocates
 // a single buffer then immediately frees it.
 pub fn prealloc_free(c: &mut Criterion) {
     c.bench_function("prealloc_free", |b| b.iter(|| {
-        let mut buf = buf::NetBuffer::new_prealloc(512);
+        black_box(buf::NetBuffer::new_prealloc(512));
     }));
 }
 
 pub fn copy_to_slice_small(c: &mut Criterion) {
-    let mut buf = buf::NetBuffer::new_prealloc(512);
+    let buf = buf::NetBuffer::new_prealloc(512);
 
     let mut dst = [0; 512];
     c.bench_function("copy_to_slice_small", |b| b.iter(|| {
@@ -42,7 +42,7 @@ pub fn copy_to_slice_small(c: &mut Criterion) {
 }
 
 pub fn copy_to_slice_large(c: &mut Criterion) {
-    let mut buf = buf::NetBuffer::new_prealloc(0x10000);
+    let buf = buf::NetBuffer::new_prealloc(0x10000);
 
     let mut dst = [0; 0x10000];
     c.bench_function("copy_to_slice_large", |b| b.iter(|| {
@@ -88,7 +88,7 @@ pub fn trim_tail(c: &mut Criterion) {
 }
 
 pub fn append_from_buffer_small(c: &mut Criterion) {
-    let mut buf1 = buf::NetBuffer::new_prealloc(512);
+    let buf1 = buf::NetBuffer::new_prealloc(512);
 
     c.bench_function("append_from_buffer_small", |b| b.iter(|| {
         let mut buf2 = buf::NetBuffer::new();
@@ -97,7 +97,7 @@ pub fn append_from_buffer_small(c: &mut Criterion) {
 }
 
 pub fn append_from_buffer_large(c: &mut Criterion) {
-    let mut buf1 = buf::NetBuffer::new_prealloc(0x10000);
+    let buf1 = buf::NetBuffer::new_prealloc(0x10000);
 
     c.bench_function("append_from_buffer_large", |b| b.iter(|| {
         let mut buf2 = buf::NetBuffer::new();
