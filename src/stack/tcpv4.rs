@@ -26,12 +26,12 @@ use std::fmt::Display;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 const EPHEMERAL_PORT_BASE: u16 = 49152;
-const TCP_MTU: usize = 1500;
 const RETRANSMIT_INTERVAL: u32 = 1000; // HACK: this should back off
 const MAX_ACK_DELAY: u32 = 500; // ms
 const MAX_DELAYED_ACKS: u32 = 5;
 const RESPONSE_TIMEOUT: u32 = 3000; // ms
 const TIME_WAIT_TIMEOUT: u32 = 5000; // ms
+const DEFAULT_TCP_MSS: usize = 536;
 
 const MAX_RECEIVE_WINDOW: u16 = 0xffff;
 const MAX_RETRIES: u32 = 5; // For connection management
@@ -75,6 +75,7 @@ pub struct TCPSocket {
     retransmit_timer_id: i32,
     response_timer_id: i32,
     request_retry_count: u32,
+    transmit_mss: usize,
 }
 
 pub struct TCPReassembler {
@@ -197,7 +198,7 @@ pub fn tcp_write(socket: &mut SocketReference, data: &[u8]) -> i32 {
 
     let mut offset = 0;
     while offset < data.len() {
-        let packet_length = std::cmp::min(data.len() - offset, TCP_MTU);
+        let packet_length = std::cmp::min(data.len() - offset, guard.transmit_mss);
         if util::seq_gt(
             guard.next_transmit_seq.wrapping_add(packet_length as u32),
             guard.transmit_window_max,
@@ -250,7 +251,7 @@ fn retransmit(socket: SocketReference) {
     if guard.retransmit_queue.len() > 0 {
         println!("Retransmitting sequence {}", guard.next_transmit_seq);
         let mut packet = buf::NetBuffer::new();
-        packet.append_from_buffer(&guard.retransmit_queue, TCP_MTU);
+        packet.append_from_buffer(&guard.retransmit_queue, guard.transmit_mss);
         guard.send_packet(packet, FLAG_ACK | FLAG_PSH);
         let socket_clone = socket.clone();
         guard.retransmit_timer_id = timer::set_timer(RETRANSMIT_INTERVAL, move || {
@@ -302,6 +303,7 @@ impl TCPSocket {
             response_timer_id: -1,
             request_retry_count: 0,
             highest_seq_received: 0,
+            transmit_mss: DEFAULT_TCP_MSS,
         }
     }
 
@@ -323,13 +325,20 @@ impl TCPSocket {
             };
 
         println!(
-            "{}: send_packet: flags {} seq {} ack {} window {}",
+            "{}: send_packet: flags {} seq {} ack {} window {} (length {})",
             self,
             flags_to_str(flags),
             self.next_transmit_seq,
             ack_seq,
-            receive_window
+            receive_window,
+            packet.len(),
         );
+
+        let options = if (flags & FLAG_SYN) != 0 {
+            &[2, 4, 0x5, 0xdc].as_slice() // MSS 1500
+        } else {
+            &[].as_slice()
+        };
 
         tcp_output(
             packet,
@@ -340,6 +349,7 @@ impl TCPSocket {
             ack_seq,
             flags,
             receive_window,
+            options,
         );
     }
 
@@ -437,16 +447,48 @@ const TCP_HEADER_LEN: usize = 20;
 //
 
 pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
+    let packet_length = packet.len();
     let header = packet.header_mut();
     let source_port = util::get_be16(&header[0..2]);
     let dest_port = util::get_be16(&header[2..4]);
     let seq_num = util::get_be32(&header[4..8]);
     let ack_num = util::get_be32(&header[8..12]);
-    let header_size = ((header[12] >> 4) * 4) as usize;
+    let header_length = ((header[12] >> 4) * 4) as usize;
     let remote_window_size = util::get_be16(&header[14..16]);
     let flags = header[13];
 
-    packet.trim_head(header_size);
+    println!(
+        "tcp_input: source_ip {} source_port {} dest_port {} flags {} seq {} ack {} window {} ({} bytes of data)",
+        source_ip,
+        source_port,
+        dest_port,
+        flags_to_str(flags),
+        seq_num,
+        ack_num,
+        remote_window_size,
+        packet_length - header_length,
+    );
+
+    // Parse options
+    let mut max_segment_size: usize = 0;
+
+    let mut opt_offset = 20;
+    while opt_offset < header_length {
+        let option_type = header[opt_offset];
+        let option_length = header[opt_offset + 1] as usize;
+        if option_type == 0 {
+            break;
+        }
+
+        if option_type == 2 {
+            max_segment_size = util::get_be16(&header[opt_offset + 2..opt_offset + 4]) as usize;
+        }
+
+        println!("option {} length {}", option_type, option_length);
+        opt_offset += option_length;
+    }
+
+    packet.trim_head(header_length);
 
     // Lookup socket
     let mut port_map_guard = PORT_MAP.lock().unwrap();
@@ -462,6 +504,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
             seq_num + 1, // Acknowledge sequence from host.
             FLAG_RST | FLAG_ACK,
             0,
+            &[],
         );
 
         return;
@@ -473,15 +516,10 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     let (mutex, cond) = &*socket;
     let mut guard = mutex.lock().unwrap();
 
-    println!(
-        "{}: tcp_input: flags {} seq {} ack {} window {} ({} bytes of data)",
-        guard,
-        flags_to_str(flags),
-        seq_num,
-        ack_num,
-        remote_window_size,
-        packet.len()
-    );
+    if max_segment_size != 0 {
+        guard.transmit_mss = max_segment_size;
+        println!("Set max segment size {}", max_segment_size);
+    }
 
     if guard.response_timer_id != -1 {
         timer::cancel_timer(guard.response_timer_id);
@@ -677,18 +715,24 @@ pub fn tcp_output(
     ack_num: u32,
     flags: u8,
     window: u16,
+    options: &[u8],
 ) {
-    packet.alloc_header(TCP_HEADER_LEN);
-    let length = packet.len() as u16;
+    assert!(options.len() % 4 == 0); // Must be pre-padded
+    let header_length = TCP_HEADER_LEN + options.len();
+    packet.alloc_header(header_length);
+    let packet_length = packet.len() as u16;
     {
         let header = packet.header_mut();
         util::set_be16(&mut header[0..2], source_port);
         util::set_be16(&mut header[2..4], dest_port);
         util::set_be32(&mut header[4..8], seq_num);
         util::set_be32(&mut header[8..12], ack_num);
-        header[12] = ((TCP_HEADER_LEN / 4) << 4) as u8; // Data offset
+        header[12] = ((header_length / 4) << 4) as u8; // Data offset
         header[13] = flags;
         util::set_be16(&mut header[14..16], window);
+        if options.len() > 0 {
+            header[20..20 + options.len()].copy_from_slice(options);
+        }
     }
 
     // Compute checksum
@@ -698,7 +742,7 @@ pub fn tcp_output(
     dest_ip.copy_to(&mut pseudo_header[4..8]);
     pseudo_header[8] = 0; // Reserved
     pseudo_header[9] = ipv4::PROTO_TCP; // Protocol
-    util::set_be16(&mut pseudo_header[10..12], length); // TCP length (header + data)
+    util::set_be16(&mut pseudo_header[10..12], packet_length); // TCP length (header + data)
 
     let ph_sum = util::compute_ones_comp(0, &pseudo_header);
     let checksum = util::compute_buffer_ones_comp(ph_sum, &packet) ^ 0xffff;
