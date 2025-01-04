@@ -114,8 +114,6 @@ impl FragmentPool {
     }
 
     /// Allocate a new fragment from the pool.
-    /// XXX as an optimization, could pass a parameter indicating
-    /// how many buffers are wanted.
     fn alloc(&mut self) -> Box<BufferFragment> {
         if self.free_list.is_none() {
             self.grow();
@@ -492,6 +490,7 @@ mod tests {
     /// For reasons that are still unclear to me, these tests are sometimes
     /// flakey and fail on the no_leaks check. There is no threading in this
     /// module, so it presumably isn't timing related.
+    /// XXX need to debug this.
     fn no_leaks() -> bool {
         util::STATS.buffers_allocated.get() == util::STATS.buffers_freed.get()
     }
@@ -648,6 +647,18 @@ mod tests {
         assert_eq!(header[19], 4);
         assert_eq!(header[20], 1);
         assert_eq!(header[39], 2);
+
+        std::mem::drop(buf);
+        assert!(no_leaks());
+    }
+
+    #[flaky]
+    #[test]
+    fn test_alloc_header_empty() {
+        let mut buf = super::NetBuffer::new();
+        buf.alloc_header(20);
+        assert_eq!(buf.len(), 20);
+        validate_buffer(&buf);
 
         std::mem::drop(buf);
         assert!(no_leaks());

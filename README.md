@@ -46,7 +46,7 @@ Install Rust: <https://www.rust-lang.org/tools/install>
 
 Install other utilities:
 
-    sudo apt install tcpdump
+    sudo apt install -y tcpdump gnuplot
 
 ## Running
 
@@ -57,6 +57,10 @@ Build
 Run unit tests:
 
     cargo test
+
+Run benchmark:
+
+    cargo bench
 
 The network stack must be run with root privileges, as the TUN device is
 not accessible to regular users. It's probably possible to make configuration

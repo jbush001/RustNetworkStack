@@ -21,7 +21,7 @@ pub mod icmpv4;
 pub mod tcpv4;
 pub mod udpv4;
 pub mod util;
-mod buf;
+pub mod buf;
 mod timer;
 mod ipv4;
 mod netif;

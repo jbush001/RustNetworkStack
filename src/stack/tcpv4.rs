@@ -353,10 +353,10 @@ impl TCPSocket {
     }
 
     fn is_established(&self) -> bool  {
-        return !matches!(
+        !matches!(
             self.state,
             TCPState::Closed | TCPState::SynSent | TCPState::TimeWait
-        );
+        )
     }
 }
 

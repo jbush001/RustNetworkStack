@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
+criterion = "0.5.1"
 lazy_static = "1.5"
 mark-flaky-tests = "1.0.2"
 rand = "0.8.5"
@@ -26,6 +27,10 @@ path = "src/test_apps/udp_echo.rs"
 [[bin]]
 name = "tcp_bulk_upload"
 path = "src/test_apps/tcp_bulk_upload.rs"
+
+[[bench]]
+name = "buf_bench"
+harness = false
 
 [build]
 script = "build.rs"
