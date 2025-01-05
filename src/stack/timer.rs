@@ -20,12 +20,22 @@ use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 //
+// General purpose timer API.
 // Timers are set and cancelled frequently, often without expiring. For example,
 // whenever data is sent or received, there is usually a timer for handling
-// retransmission or deferred acknowledgements. As such, I don't bother to use some
-// kind of sorted data structure. The tradeoff is that this must scan the list of
-// active timers for every tick. Given the assumption that the total number of timers
-// is relatively small, this seems like a reasonable tradeoff.
+// retransmission or deferred acknowledgements. As such, this doesn't use any
+// kind of sorted data structure, which would have a overhead for all of the
+// unnecessary insertions and deletions (and is trickier to implement in Rust's
+// ownership model, generally requiring some sort of doubly linked list).
+// the tradeoff is that this must scan the list of active timers for every tick.
+// Given the assumption that the total number of  timers is relatively small,
+// this seems like a reasonable, but obviously would run into scaling issues
+// in a real system.
+//
+// Alternatives:
+// - A "timer wheel" is a data structure that reduces the overhead of sorted
+//   insertions by hashing the timeout.
+// - Various sorts of priority queues, heaps, etc.
 //
 
 const TIMER_INTERVAL: Duration = Duration::from_millis(50);
