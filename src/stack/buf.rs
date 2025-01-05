@@ -479,8 +479,9 @@ impl<'a> Iterator for BufferIterator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use mark_flaky_tests::*;
-    use super::*;
+    // At one point, I would check at the end of each of these tests if all
+    // buffers were freed, but that would fail intermittently. It turns out
+    // Rust runs unit tests in parallel.
 
     // Walk through the buffer to ensure it is correctly formed.
     fn validate_buffer(buf: &super::NetBuffer) {
@@ -498,23 +499,11 @@ mod tests {
         assert_eq!(actual_length, buf.len());
     }
 
-    /// For reasons that are still unclear to me, this test fails
-    /// intermittently. There is no multithreading in these tests, so it
-    /// presumably isn't timing related.
-    /// XXX need to debug this.
-    fn no_leaks() -> bool {
-        // util::STATS.buffers_allocated.get() == util::STATS.buffers_freed.get()
-        true
-    }
-
     #[test]
     fn test_new_prealloc() {
         let buf = super::NetBuffer::new_prealloc(1000);
         assert_eq!(buf.len(), 1000);
         validate_buffer(&buf);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -523,8 +512,6 @@ mod tests {
         let buf = super::NetBuffer::new_prealloc(0);
         assert_eq!(buf.len(), 0);
         validate_buffer(&buf);
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -549,9 +536,6 @@ mod tests {
         assert_eq!(slice3[0], 3);
         assert_eq!(slice3[475], 3);
         assert!(iter.next().is_none());
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -562,9 +546,6 @@ mod tests {
         // Zero length
         let mut iter = buf.iter(0);
         assert!(iter.next().is_none());
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -573,8 +554,6 @@ mod tests {
         let buf = super::NetBuffer::new();
         let mut iter = buf.iter(usize::MAX);
         assert!(iter.next().is_none());
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -651,9 +630,6 @@ mod tests {
         assert_eq!(header[19], 4);
         assert_eq!(header[20], 1);
         assert_eq!(header[39], 2);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -662,9 +638,6 @@ mod tests {
         buf.alloc_header(20);
         assert_eq!(buf.len(), 20);
         validate_buffer(&buf);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[should_panic]
@@ -696,9 +669,6 @@ mod tests {
         for i in 0..492 {
             assert_eq!(dest[i], (i + 20) as u8);
         }
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -720,9 +690,6 @@ mod tests {
         let header = buf.header();
         assert_eq!(header[0], 20);
         assert_eq!(header[5], 25);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -735,9 +702,6 @@ mod tests {
         buf.trim_head(5);
         assert_eq!(buf.len(), 0);
         validate_buffer(&buf);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -760,9 +724,6 @@ mod tests {
         buf.trim_head(0);
         assert_eq!(buf.len(), 5);
         validate_buffer(&buf);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -787,9 +748,6 @@ mod tests {
         for i in 0..492 {
             assert_eq!(dest[i], i as u8);
         }
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -808,9 +766,6 @@ mod tests {
         let mut dest = [0; 492];
         buf.copy_to_slice(&mut dest);
         assert_eq!(dest[0..492], [1; 492]);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -823,9 +778,6 @@ mod tests {
         buf.trim_tail(5);
         assert_eq!(buf.len(), 0);
         validate_buffer(&buf);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -848,9 +800,6 @@ mod tests {
         buf.trim_tail(0);
         assert_eq!(buf.len(), 5);
         validate_buffer(&buf);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -870,9 +819,6 @@ mod tests {
         let mut dest = [0; 15];
         buf.copy_to_slice(&mut dest);
         assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -883,10 +829,6 @@ mod tests {
         buf.append_from_slice(&[]);
         assert_eq!(buf.len(), 4);
         validate_buffer(&buf);
-
-        // Free buffers
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -910,9 +852,6 @@ mod tests {
         buf.copy_to_slice(&mut dest);
         assert_eq!(dest[..500], slice1);
         assert_eq!(dest[500..], slice2);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -925,10 +864,6 @@ mod tests {
             buffer.append_from_slice(&[1; 512]);
             buflist.push(buffer);
         }
-
-        // Free buffers
-        std::mem::drop(buflist);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -945,9 +880,6 @@ mod tests {
         );
         assert_eq!(copied, 15);
         assert_eq!(buf.len(), 15);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -960,9 +892,6 @@ mod tests {
         let copied = buf.copy_to_slice(&mut dest);
         assert_eq!(dest, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         assert_eq!(copied, 10);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -971,9 +900,6 @@ mod tests {
         let mut dest = [0; 10];
         let copied = buf.copy_to_slice(&mut dest);
         assert_eq!(copied, 0);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -1003,10 +929,6 @@ mod tests {
         assert_eq!(dest[2048..2536], [5; 488]);
 
         assert_eq!(buf1.len(), 2536);
-
-        std::mem::drop(buf1);
-        std::mem::drop(buf2);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -1035,9 +957,6 @@ mod tests {
         assert_eq!(dest[512..1024], [2; 512]);
         assert_eq!(dest[1024..1536], [3; 512]);
         assert_eq!(buf1.len(), 3072);
-
-        std::mem::drop(buf1);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -1053,9 +972,6 @@ mod tests {
         let mut dest = [0; 512];
         buf1.copy_to_slice(&mut dest);
         assert_eq!(dest[0..512], [1; 512]);
-
-        std::mem::drop(buf1);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -1073,9 +989,6 @@ mod tests {
         let mut dest = [0; 5];
         buf1.copy_to_slice(&mut dest);
         assert_eq!(dest, [1, 2, 3, 4, 5]);
-
-        std::mem::drop(buf1);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -1085,9 +998,6 @@ mod tests {
         buf1.append_buffer(buf2);
         assert_eq!(buf1.len(), 0);
         validate_buffer(&buf1);
-
-        std::mem::drop(buf1);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -1130,9 +1040,6 @@ mod tests {
         receive_queue.trim_head(452);
         assert_eq!(receive_queue.len(), 0);
         validate_buffer(&receive_queue);
-
-        std::mem::drop(receive_queue);
-        assert!(no_leaks());
     }
 
     #[test]
@@ -1175,8 +1082,5 @@ mod tests {
         assert_eq!(out_data[67], 7);
         assert_eq!(out_data[570], 254);
         assert_eq!(out_data[571], 255);
-
-        std::mem::drop(buf);
-        assert!(no_leaks());
     }
 }
