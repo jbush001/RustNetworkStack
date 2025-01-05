@@ -83,6 +83,17 @@ pub struct TCPReassembler {
     out_of_order: Vec<(u32, buf::NetBuffer)>,
 }
 
+struct TCPSendParams<'a> {
+    source_port: u16,
+    dest_ip: util::IPv4Addr,
+    dest_port: u16,
+    seq_num: u32,
+    ack_num: u32,
+    flags: u8,
+    window: u16,
+    options: &'a [u8],
+}
+
 // The condition in the socket reference is used to signal to clients of the
 // API that are waiting, for example, for a reader waiting for new data or
 // on open. This must be stored outside the socket structure itself
@@ -174,11 +185,11 @@ pub fn tcp_read(socket: &mut SocketReference, data: &mut [u8]) -> i32 {
     let mut guard = mutex.lock().unwrap();
 
     loop {
-        if !matches!(guard.state, TCPState::Established) && guard.receive_queue.len() == 0 {
+        if !matches!(guard.state, TCPState::Established) && guard.receive_queue.is_empty() {
             return -1;
         }
 
-        if guard.receive_queue.len() > 0 {
+        if !guard.receive_queue.is_empty() {
             let got = guard.receive_queue.copy_to_slice(data);
             guard.receive_queue.trim_head(got);
             return got as i32;
@@ -248,7 +259,7 @@ fn retransmit(socket: SocketReference) {
 
     util::STATS.packets_retransmitted.inc();
 
-    if guard.retransmit_queue.len() > 0 {
+    if !guard.retransmit_queue.is_empty() {
         println!("Retransmitting sequence {}", guard.next_transmit_seq);
         let mut packet = buf::NetBuffer::new();
         packet.append_from_buffer(&guard.retransmit_queue, guard.transmit_mss);
@@ -340,17 +351,18 @@ impl TCPSocket {
             &[].as_slice()
         };
 
-        tcp_output(
-            packet,
-            self.local_port,
-            self.remote_ip,
-            self.remote_port,
-            self.next_transmit_seq,
-            ack_seq,
+        let params = TCPSendParams {
+            source_port: self.local_port,
+            dest_ip: self.remote_ip,
+            dest_port: self.remote_port,
+            seq_num: self.next_transmit_seq,
+            ack_num: ack_seq,
             flags,
-            receive_window,
+            window: receive_window,
             options,
-        );
+        };
+
+        tcp_output(packet, &params);
     }
 
     fn set_state(&mut self, new_state: TCPState) {
@@ -495,18 +507,18 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     let pm_entry = port_map_guard.get_mut(&(source_ip, source_port, dest_port));
     if pm_entry.is_none() {
         let response = buf::NetBuffer::new();
-        tcp_output(
-            response,
-            dest_port,
-            source_ip,
-            source_port,
-            1,           // Sequence number
-            seq_num + 1, // Acknowledge sequence from host.
-            FLAG_RST | FLAG_ACK,
-            0,
-            &[],
-        );
+        let params = TCPSendParams {
+            source_port: dest_port,
+            dest_ip: source_ip,
+            dest_port: source_port,
+            seq_num: 1,
+            ack_num: seq_num + 1,
+            flags: FLAG_RST | FLAG_ACK,
+            window: 0,
+            options: &[],
+        };
 
+        tcp_output(response, &params);
         return;
     }
 
@@ -533,7 +545,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
         return;
     }
 
-    if packet.len() > 0 {
+    if !packet.is_empty() {
         // Handle received data
         guard.highest_seq_received = util::wrapping_max(
             guard.highest_seq_received,
@@ -644,7 +656,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
                         guard.retransmit_queue.len()
                     );
 
-                    if guard.retransmit_queue.len() == 0 {
+                    if guard.retransmit_queue.is_empty() {
                         timer::cancel_timer(guard.retransmit_timer_id);
                         guard.retransmit_timer_id = -1;
                     }
@@ -706,32 +718,22 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     }
 }
 
-pub fn tcp_output(
-    mut packet: buf::NetBuffer,
-    source_port: u16,
-    dest_ip: util::IPv4Addr,
-    dest_port: u16,
-    seq_num: u32,
-    ack_num: u32,
-    flags: u8,
-    window: u16,
-    options: &[u8],
-) {
-    assert!(options.len() % 4 == 0); // Must be pre-padded
-    let header_length = TCP_HEADER_LEN + options.len();
+fn tcp_output(mut packet: buf::NetBuffer, params: &TCPSendParams) {
+    assert!(params.options.len() % 4 == 0); // Must be pre-padded
+    let header_length = TCP_HEADER_LEN + params.options.len();
     packet.alloc_header(header_length);
     let packet_length = packet.len() as u16;
     {
         let header = packet.header_mut();
-        util::set_be16(&mut header[0..2], source_port);
-        util::set_be16(&mut header[2..4], dest_port);
-        util::set_be32(&mut header[4..8], seq_num);
-        util::set_be32(&mut header[8..12], ack_num);
+        util::set_be16(&mut header[0..2], params.source_port);
+        util::set_be16(&mut header[2..4], params.dest_port);
+        util::set_be32(&mut header[4..8], params.seq_num);
+        util::set_be32(&mut header[8..12], params.ack_num);
         header[12] = ((header_length / 4) << 4) as u8; // Data offset
-        header[13] = flags;
-        util::set_be16(&mut header[14..16], window);
-        if options.len() > 0 {
-            header[20..20 + options.len()].copy_from_slice(options);
+        header[13] = params.flags;
+        util::set_be16(&mut header[14..16], params.window);
+        if !params.options.is_empty() {
+            header[20..20 + params.options.len()].copy_from_slice(params.options);
         }
     }
 
@@ -739,7 +741,7 @@ pub fn tcp_output(
     // First need to create a pseudo header
     let mut pseudo_header = [0u8; 12];
     netif::get_ipaddr().copy_to(&mut pseudo_header[0..4]);
-    dest_ip.copy_to(&mut pseudo_header[4..8]);
+    params.dest_ip.copy_to(&mut pseudo_header[4..8]);
     pseudo_header[8] = 0; // Reserved
     pseudo_header[9] = ipv4::PROTO_TCP; // Protocol
     util::set_be16(&mut pseudo_header[10..12], packet_length); // TCP length (header + data)
@@ -750,7 +752,7 @@ pub fn tcp_output(
     let header = packet.header_mut();
     util::set_be16(&mut header[16..18], checksum);
 
-    ipv4::ip_output(packet, ipv4::PROTO_TCP, dest_ip);
+    ipv4::ip_output(packet, ipv4::PROTO_TCP, params.dest_ip);
 }
 
 fn set_response_timer(guard: &mut MutexGuard<TCPSocket>, socket: SocketReference) {

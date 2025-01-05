@@ -19,30 +19,30 @@ use std::cmp;
 use std::sync::Mutex;
 use crate::util;
 
-///
-/// This class implements an efficient, flexible container for unstructured
-/// data, which is used as temporary storage throughout the network stack,
-/// including for packets and queued receive and transmit data. It is similar
-/// to the mbuf in the BSD network stack or skbuff in Linux, although
-/// this is implemented more idiomatically with Rust's ownership model.
-///
-/// The design goals of any network buffering system are to minimize copies,
-/// avoid external heap fragmentation, and optimize allocation speed. The
-/// base storage unit is a fixed-size BufferFragment. These fragments are
-/// chained together to allow buffers to grow to arbitrary sizes. Fragments
-/// are allocated from a memory pool of fixed sized chunks, which is fast.
-///
-/// Alternatives:
-/// - I also considered having NetBuffer contain an array of pointers
-///   to fragments, which would be faster for some use cases and simpler,
-///   However, this would limit the size of buffers (in lieu of reallocating
-///   the array dynamically, which has its own issues).
-/// - Another design choice would be to use raw pointers to the fragments rather
-///   than a Box. This would allow the NetBuffer to have a pointer to the tail
-///   fragment, which would speed up appends, but the performance improvement
-///   might be minimal and doesn't seem to justify giving up Rust safety
-///   guarantees.
-///
+//
+// This class implements an efficient, flexible container for unstructured
+// data, which is used as temporary storage throughout the network stack,
+// including for packets and queued receive and transmit data. It is similar
+// to the mbuf in the BSD network stack or skbuff in Linux, although
+// this is implemented more idiomatically with Rust's ownership model.
+//
+// The design goals of any network buffering system are to minimize copies,
+// avoid external heap fragmentation, and optimize allocation speed. The
+// base storage unit is a fixed-size BufferFragment. These fragments are
+// chained together to allow buffers to grow to arbitrary sizes. Fragments
+// are allocated from a memory pool of fixed sized chunks, which is fast.
+//
+// Alternatives:
+// - I also considered having NetBuffer contain an array of pointers
+//   to fragments, which would be faster for some use cases and simpler,
+//   However, this would limit the size of buffers (in lieu of reallocating
+//   the array dynamically, which has its own issues).
+// - Another design choice would be to use raw pointers to the fragments rather
+//   than a Box. This would allow the NetBuffer to have a pointer to the tail
+//   fragment, which would speed up appends, but the performance improvement
+//   might be minimal and doesn't seem to justify giving up Rust safety
+//   guarantees.
+//
 
 type FragPointer = Option<Box<BufferFragment>>;
 
@@ -227,6 +227,10 @@ impl NetBuffer {
         self.length
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+
     /// Return an iterator that will walk through the fragments in the buffer and
     /// return a slice for each.
     pub fn iter(&self, length: usize) -> BufferIterator {
@@ -339,7 +343,7 @@ impl NetBuffer {
             return;
         }
 
-        self.length = self.length - size;
+        self.length -= size;
         let mut remaining = self.length;
 
         // Skip entire fragments that we will keep
@@ -503,6 +507,7 @@ mod tests {
     fn test_new_prealloc() {
         let buf = super::NetBuffer::new_prealloc(1000);
         assert_eq!(buf.len(), 1000);
+        assert!(!buf.is_empty());
         validate_buffer(&buf);
     }
 
@@ -511,6 +516,7 @@ mod tests {
         // Doesn't make a lot of sense, but ensure it doesn't do anything weird.
         let buf = super::NetBuffer::new_prealloc(0);
         assert_eq!(buf.len(), 0);
+        assert!(buf.is_empty());
         validate_buffer(&buf);
     }
 
@@ -635,14 +641,19 @@ mod tests {
     #[test]
     fn test_alloc_header_empty() {
         let mut buf = super::NetBuffer::new();
+        assert!(buf.is_empty());
         buf.alloc_header(20);
+        assert!(!buf.is_empty());
         assert_eq!(buf.len(), 20);
+        assert!(!buf.is_empty());
         validate_buffer(&buf);
     }
 
     #[should_panic]
     #[test]
     fn test_alloc_header_too_large() {
+        // Will fail because it doesn't fit in a fragment (and it guarantees header
+        // will not be split).
         let mut buf = super::NetBuffer::new();
         buf.alloc_header(1000);
     }
@@ -662,6 +673,7 @@ mod tests {
         buf.trim_head(20);
         assert!(buf.len() == 492);
         validate_buffer(&buf);
+        assert!(!buf.is_empty());
 
         // Check the contents
         let mut dest = [0; 512];
@@ -686,6 +698,7 @@ mod tests {
         buf.alloc_header(20); // Prepends new fragment
         buf.trim_head(40); // Remove first fragment and then some
         assert_eq!(buf.len(), 492);
+        assert!(!buf.is_empty());
         validate_buffer(&buf);
         let header = buf.header();
         assert_eq!(header[0], 20);
@@ -701,6 +714,7 @@ mod tests {
 
         buf.trim_head(5);
         assert_eq!(buf.len(), 0);
+        assert!(buf.is_empty());
         validate_buffer(&buf);
     }
 
@@ -723,6 +737,7 @@ mod tests {
 
         buf.trim_head(0);
         assert_eq!(buf.len(), 5);
+        assert!(!buf.is_empty());
         validate_buffer(&buf);
     }
 
@@ -777,6 +792,7 @@ mod tests {
 
         buf.trim_tail(5);
         assert_eq!(buf.len(), 0);
+        assert!(buf.is_empty());
         validate_buffer(&buf);
     }
 
