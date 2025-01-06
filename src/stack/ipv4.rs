@@ -46,6 +46,10 @@ const DEFAULT_TTL: u8 = 64;
 //    +-----------------------------------------------+---------------+
 
 pub fn ip_input(mut packet: buf::NetBuffer) {
+    // A common way to decode packet headers is to cast the raw byte
+    // array to a packed structure. This is a bit more challenging in
+    // Rust (it's sketchy in any language, but Rust is more of a stickler).
+    // Instead, I manually decode the relevant fields into local variables.
     let header = packet.header();
     let version = header[0] >> 4;
     if version != 4 {
@@ -53,9 +57,21 @@ pub fn ip_input(mut packet: buf::NetBuffer) {
     }
 
     let header_len = ((header[0] & 0xf) as usize) * 4;
+
+    // Note that we don't decode IP options here, but just skip them.
+    // These are generally not used.
+
     let checksum = util::compute_checksum(&header[..header_len]);
     if checksum != 0 {
         println!("IP checksum error {:04x}", checksum);
+        return;
+    }
+
+    // Reassembing fragmented packet is not supported, but this seems
+    // to be very rare.
+
+    if header[6..8] != [0, 0] {
+        println!("Fragmented IP packet: not supported");
         return;
     }
 
@@ -68,7 +84,7 @@ pub fn ip_input(mut packet: buf::NetBuffer) {
         PROTO_ICMP => icmpv4::icmp_input(packet, source_addr),
         PROTO_TCP => tcpv4::tcp_input(packet, source_addr),
         PROTO_UDP => udpv4::udp_input(packet, source_addr),
-        _ => println!("Unkonwn protocol {}", protocol),
+        _ => println!("IP: Unknown protocol {}", protocol),
     }
 }
 
