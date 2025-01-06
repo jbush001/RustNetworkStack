@@ -69,9 +69,8 @@ pub fn ip_input(mut packet: buf::NetBuffer) {
 
     // Reassembing fragmented packet is not supported, but this seems
     // to be very rare.
-
-    if header[6..8] != [0, 0] {
-        println!("Fragmented IP packet: not supported");
+    if (util::get_be16(&header[6..8]) & 0x3fff) != 0 {
+        println!("IP: Fragmented packet, not supported");
         return;
     }
 
