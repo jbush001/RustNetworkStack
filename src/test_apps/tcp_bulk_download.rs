@@ -16,7 +16,7 @@
 
 use std::io::Read;
 use std::time::Duration;
-use netstack::{init_netstack, tcpv4, util};
+use netstack::{init_netstack, tcp, util};
 use std::thread::sleep;
 
 fn main() {
@@ -26,7 +26,7 @@ fn main() {
     println!("Press key to connect");
     let _ = std::io::stdin().read(&mut [0u8]).unwrap();
 
-    let result = tcpv4::tcp_open(util::IPv4Addr::new_from(&[10u8, 0, 0, 1]), 3000);
+    let result = tcp::tcp_open(util::IPv4Addr::new_from(&[10u8, 0, 0, 1]), 3000);
     if result.is_err() {
         println!("Failed to open socket: {}", result.err().unwrap());
         return;
@@ -38,11 +38,11 @@ fn main() {
 
     const REQUEST_STRING: &str = "GET / HTTP/1.0\r\n\r\n";
     const REQUEST_BYTES: &[u8] = REQUEST_STRING.as_bytes();
-    tcpv4::tcp_write(&mut socket, REQUEST_BYTES);
+    tcp::tcp_write(&mut socket, REQUEST_BYTES);
     for _ in 0..25 {
         sleep(Duration::from_millis(100));
         let mut data = [0; 1500];
-        let received = tcpv4::tcp_read(&mut socket, &mut data);
+        let received = tcp::tcp_read(&mut socket, &mut data);
         if received < 0 {
             println!("Connection closed");
             break;
@@ -56,7 +56,7 @@ fn main() {
     }
 
     println!("Closing socket");
-    tcpv4::tcp_close(&mut socket);
+    tcp::tcp_close(&mut socket);
     std::mem::drop(socket);
 
     // Wait a spell to see what other things come in.

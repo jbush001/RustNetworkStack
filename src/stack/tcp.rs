@@ -15,7 +15,7 @@
 //
 
 use crate::buf;
-use crate::ipv4;
+use crate::ip;
 use crate::netif;
 use crate::timer;
 use crate::util;
@@ -743,7 +743,7 @@ fn tcp_output(mut packet: buf::NetBuffer, params: &TCPSendParams) {
     netif::get_ipaddr().copy_to(&mut pseudo_header[0..4]);
     params.dest_ip.copy_to(&mut pseudo_header[4..8]);
     pseudo_header[8] = 0; // Reserved
-    pseudo_header[9] = ipv4::PROTO_TCP; // Protocol
+    pseudo_header[9] = ip::PROTO_TCP; // Protocol
     util::set_be16(&mut pseudo_header[10..12], packet_length); // TCP length (header + data)
 
     let ph_sum = util::compute_ones_comp(0, &pseudo_header);
@@ -752,7 +752,7 @@ fn tcp_output(mut packet: buf::NetBuffer, params: &TCPSendParams) {
     let header = packet.header_mut();
     util::set_be16(&mut header[16..18], checksum);
 
-    ipv4::ip_output(packet, ipv4::PROTO_TCP, params.dest_ip);
+    ip::ip_output(packet, ip::PROTO_TCP, params.dest_ip);
 }
 
 fn set_response_timer(guard: &mut MutexGuard<TCPSocket>, socket: SocketReference) {

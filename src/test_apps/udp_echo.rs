@@ -14,12 +14,12 @@
 // limitations under the License.
 //
 
-use netstack::{init_netstack, udpv4, util};
+use netstack::{init_netstack, udp, util};
 
 fn main() {
     init_netstack();
 
-    let result = udpv4::udp_open(8000);
+    let result = udp::udp_open(8000);
     if result.is_err() {
         println!("Failed to open socket: {}", result.err().unwrap());
         return;
@@ -32,14 +32,14 @@ fn main() {
         let mut source_port: u16 = 0;
         let mut data = [0; 1500];
 
-        let received = udpv4::udp_recv(&mut socket, &mut data, &mut source_addr, &mut source_port);
+        let received = udp::udp_recv(&mut socket, &mut data, &mut source_addr, &mut source_port);
         println!(
             "Received UDP packet from {}:{} ({} bytes)",
             source_addr, source_port, received
         );
 
         util::print_binary(&data[..received as usize]);
-        udpv4::udp_send(
+        udp::udp_send(
             &mut socket,
             source_addr,
             source_port,

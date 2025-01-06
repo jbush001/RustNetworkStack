@@ -15,7 +15,7 @@
 //
 
 use crate::buf;
-use crate::ipv4;
+use crate::ip;
 use crate::util;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
@@ -147,5 +147,5 @@ fn udp_output(
     util::set_be16(&mut header[4..6], length);
     util::set_be16(&mut header[6..8], 0); // Skip computing checksum
 
-    ipv4::ip_output(packet, ipv4::PROTO_UDP, dest_addr);
+    ip::ip_output(packet, ip::PROTO_UDP, dest_addr);
 }

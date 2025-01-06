@@ -15,7 +15,7 @@
 //
 
 use crate::buf;
-use crate::ipv4;
+use crate::ip;
 use crate::util;
 
 //    0               1               2               3
@@ -56,5 +56,5 @@ pub fn icmp_output(mut packet: buf::NetBuffer, packet_type: u8, dest_addr: util:
 
     let header = packet.header_mut();
     util::set_be16(&mut header[2..4], checksum);
-    ipv4::ip_output(packet, ipv4::PROTO_ICMP, dest_addr);
+    ip::ip_output(packet, ip::PROTO_ICMP, dest_addr);
 }

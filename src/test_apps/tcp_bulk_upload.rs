@@ -17,7 +17,7 @@
 use std::io::Read;
 use std::thread::sleep;
 use std::time::Duration;
-use netstack::{init_netstack, tcpv4, util};
+use netstack::{init_netstack, tcp, util};
 
 fn main() {
     init_netstack();
@@ -25,7 +25,7 @@ fn main() {
     println!("Press key to connect");
     let _ = std::io::stdin().read(&mut [0u8]).unwrap();
 
-    let result = tcpv4::tcp_open(util::IPv4Addr::new_from(&[10u8, 0, 0, 1]), 3000);
+    let result = tcp::tcp_open(util::IPv4Addr::new_from(&[10u8, 0, 0, 1]), 3000);
     if result.is_err() {
         println!("Failed to open socket: {}", result.err().unwrap());
         return;
@@ -54,10 +54,10 @@ fn main() {
         };
     }
 
-    tcpv4::tcp_write(&mut socket, &data);
+    tcp::tcp_write(&mut socket, &data);
 
     println!("Closing socket");
-    tcpv4::tcp_close(&mut socket);
+    tcp::tcp_close(&mut socket);
     std::mem::drop(socket);
 
     // Wait a spell to see what other things come in.

@@ -15,10 +15,10 @@
 //
 
 use crate::buf;
-use crate::icmpv4;
+use crate::icmp;
 use crate::netif;
-use crate::tcpv4;
-use crate::udpv4;
+use crate::tcp;
+use crate::udp;
 use crate::util;
 use std::sync::atomic::{AtomicU16, Ordering};
 
@@ -53,6 +53,7 @@ pub fn ip_input(mut packet: buf::NetBuffer) {
     let header = packet.header();
     let version = header[0] >> 4;
     if version != 4 {
+        println!("IP: Unsupported version");
         return;
     }
 
@@ -80,9 +81,9 @@ pub fn ip_input(mut packet: buf::NetBuffer) {
     packet.trim_head(header_len);
 
     match protocol {
-        PROTO_ICMP => icmpv4::icmp_input(packet, source_addr),
-        PROTO_TCP => tcpv4::tcp_input(packet, source_addr),
-        PROTO_UDP => udpv4::udp_input(packet, source_addr),
+        PROTO_ICMP => icmp::icmp_input(packet, source_addr),
+        PROTO_TCP => tcp::tcp_input(packet, source_addr),
+        PROTO_UDP => udp::udp_input(packet, source_addr),
         _ => println!("IP: Unknown protocol {}", protocol),
     }
 }

@@ -17,19 +17,19 @@
 // This one probably shouldn't be public, but it is because apps use the
 // function to print the buffer allocation stats. Perhaps refactor that.
 
-pub mod icmpv4;
-pub mod tcpv4;
-pub mod udpv4;
+pub mod icmp;
+pub mod tcp;
+pub mod udp;
 pub mod util;
 pub mod buf;
 mod timer;
-mod ipv4;
+mod ip;
 mod netif;
 
 fn packet_receive_thread() {
     loop {
         let packet = netif::recv_packet();
-        ipv4::ip_input(packet);
+        ip::ip_input(packet);
     }
 }
 
