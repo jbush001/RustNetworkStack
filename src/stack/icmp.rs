@@ -30,7 +30,7 @@ const ICMP_ECHO_REPLY: u8 = 0;
 
 const ICMP_HEADER_LEN: usize = 4;
 
-pub fn icmp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
+pub fn icmp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
     let header = packet.header();
     let checksum = util::compute_buffer_ones_comp(0, &packet) ^ 0xffff;
     if checksum != 0 {
@@ -48,7 +48,7 @@ pub fn icmp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
     }
 }
 
-pub fn icmp_output(mut packet: buf::NetBuffer, packet_type: u8, dest_addr: util::IPv4Addr) {
+pub fn icmp_output(mut packet: buf::NetBuffer, packet_type: u8, dest_addr: util::IPAddr) {
     packet.alloc_header(ICMP_HEADER_LEN);
     let header = packet.header_mut();
     header[0] = packet_type;

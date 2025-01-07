@@ -36,12 +36,12 @@ extern "C" {
     fn tun_send(vecs: *const u8, length: usize) -> i32;
 }
 
-static mut LOCAL_IP: util::IPv4Addr = util::IPv4Addr::new();
+static mut LOCAL_IP: util::IPAddr = util::IPAddr::new();
 
 pub fn init() {
     unsafe {
         tun_init();
-        LOCAL_IP = util::IPv4Addr::new_from(&[10, 0, 0, 2]);
+        LOCAL_IP = util::IPAddr::new_from(&[10, 0, 0, 2]);
     }
 }
 
@@ -94,6 +94,6 @@ pub fn send_packet(packet: buf::NetBuffer) {
     util::STATS.packets_sent.inc();
 }
 
-pub fn get_ipaddr() -> util::IPv4Addr {
+pub fn get_ipaddr() -> util::IPAddr {
     unsafe { LOCAL_IP }
 }

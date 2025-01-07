@@ -19,33 +19,59 @@ use std::convert::TryInto;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct IPv4Addr {
-    addr: [u8; 4],
+pub enum IPAddr {
+    V4([u8; 4]),
+    V6([u8; 16]),
 }
 
-impl IPv4Addr {
+impl IPAddr {
     pub const fn new() -> Self {
-        Self { addr: [0; 4] }
+        IPAddr::V4([0, 0, 0, 0])
+    }
+
+    pub fn new_v4(addr: &[u8]) -> Self {
+        IPAddr::V4(addr.try_into().unwrap())
+    }
+
+    pub fn new_v6(addr: &[u8]) -> Self {
+        IPAddr::V6(addr.try_into().unwrap())
     }
 
     pub fn new_from(addr: &[u8]) -> Self {
-        Self {
-            addr: addr.try_into().unwrap(),
+        if addr.len() == 4 {
+            Self::new_v4(addr)
+        } else {
+            Self::new_v6(addr)
         }
     }
 
     pub fn copy_to(&self, buffer: &mut [u8]) {
-        buffer.copy_from_slice(&self.addr);
+        match self {
+            IPAddr::V4(addr) => buffer.copy_from_slice(addr),
+            IPAddr::V6(addr) => buffer.copy_from_slice(addr),
+        }
     }
 }
 
-impl std::fmt::Display for IPv4Addr {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "{}.{}.{}.{}",
-            self.addr[0], self.addr[1], self.addr[2], self.addr[3]
-        )
+impl std::fmt::Display for IPAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        match self {
+            IPAddr::V4(addr) => write!(f, "{}.{}.{}.{}", addr[0], addr[1], addr[2], addr[3]),
+            IPAddr::V6(addr) => {
+                for i in 0..8 {
+                    if i != 0 {
+                        write!(f, ":")?;
+                    }
+
+
+                    if addr[i * 2..i * 2 + 2] != [0, 0] {
+                        write!(f, "{:02x}{:02x}", addr[i * 2], addr[i * 2 + 1])?;
+                    }
+                }
+
+                Ok(())
+            }
+        }
     }
 }
 
@@ -279,16 +305,26 @@ mod tests {
     }
 
     #[test]
-    fn test_ip_to_str() {
+    fn test_ip_to_str_v4() {
         assert_eq!(
-            super::IPv4Addr::new_from(&[18u8, 52, 86, 120]).to_string(),
+            super::IPAddr::new_v4(&[18u8, 52, 86, 120]).to_string(),
             "18.52.86.120"
         );
     }
 
     #[test]
+    fn test_ip_to_str_v6() {
+        assert_eq!(
+            super::IPAddr::new_v6(
+                &[0x20u8, 0x1, 0x0d, 0xb8, 0xac, 0x10, 0xfe, 0x01, 0, 0, 0, 0, 0, 0, 0, 0]
+            ).to_string(),
+            "2001:0db8:ac10:fe01::::"
+        );
+    }
+
+    #[test]
     fn test_copy_to() {
-        let ip = super::IPv4Addr::new_from(&[192, 168, 1, 1]);
+        let ip = super::IPAddr::new_from(&[192, 168, 1, 1]);
         let mut buffer = [0u8; 4];
         ip.copy_to(&mut buffer);
         assert_eq!(buffer, [192, 168, 1, 1]);

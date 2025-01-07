@@ -76,7 +76,7 @@ pub fn ip_input(mut packet: buf::NetBuffer) {
     }
 
     let protocol = header[9];
-    let source_addr = util::IPv4Addr::new_from(&header[12..16]);
+    let source_addr = util::IPAddr::new_from(&header[12..16]);
 
     packet.trim_head(header_len);
 
@@ -88,7 +88,7 @@ pub fn ip_input(mut packet: buf::NetBuffer) {
     }
 }
 
-pub fn ip_output(mut packet: buf::NetBuffer, protocol: u8, dest_addr: util::IPv4Addr) {
+pub fn ip_output(mut packet: buf::NetBuffer, protocol: u8, dest_addr: util::IPAddr) {
     packet.alloc_header(IP_HEADER_LEN);
     let packet_length = packet.len() as u16;
     let header = packet.header_mut();

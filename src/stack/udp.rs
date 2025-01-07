@@ -24,7 +24,7 @@ use std::sync::Condvar;
 use std::sync::{Arc, Mutex};
 
 pub struct UDPSocket {
-    receive_queue: VecDeque<(util::IPv4Addr, u16, buf::NetBuffer)>,
+    receive_queue: VecDeque<(util::IPAddr, u16, buf::NetBuffer)>,
     port: u16,
 }
 
@@ -61,7 +61,7 @@ pub fn udp_open(port: u16) -> Result<SocketReference, &'static str> {
 pub fn udp_recv(
     socket: &mut SocketReference,
     data: &mut [u8],
-    out_addr: &mut util::IPv4Addr,
+    out_addr: &mut util::IPAddr,
     out_port: &mut u16,
 ) -> i32 {
     let (mutex, cond) = &**socket;
@@ -86,16 +86,22 @@ pub fn udp_recv(
 
 pub fn udp_send(
     socket: &mut SocketReference,
-    dest_addr: util::IPv4Addr,
+    dest_addr: util::IPAddr,
     dest_port: u16,
     data: &[u8],
-) {
+) -> Result<(), &'static str> {
+    if !matches!(dest_addr, util::IPAddr::V4(_)) {
+        return Err("Only IPv4 is supported");
+    }
+
     let (mutex, _cond) = &**socket;
     let guard = mutex.lock().unwrap();
 
     let mut packet = buf::NetBuffer::new();
     packet.append_from_slice(data);
     udp_output(packet, dest_addr, guard.port, dest_port);
+
+    Ok(())
 }
 
 //    0               1               2               3
@@ -107,7 +113,7 @@ pub fn udp_send(
 
 const UDP_HEADER_LEN: usize = 8;
 
-pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
+pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPAddr) {
     let header = packet.header();
     let source_port = util::get_be16(&header[0..2]);
     let dest_port = util::get_be16(&header[2..4]);
@@ -135,7 +141,7 @@ pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPv4Addr) {
 
 fn udp_output(
     mut packet: buf::NetBuffer,
-    dest_addr: util::IPv4Addr,
+    dest_addr: util::IPAddr,
     source_port: u16,
     dest_port: u16,
 ) {

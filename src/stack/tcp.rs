@@ -56,7 +56,7 @@ const FLAG_PSH: u8 = 8;
 const FLAG_ACK: u8 = 16;
 
 pub struct TCPSocket {
-    remote_ip: util::IPv4Addr,
+    remote_ip: util::IPAddr,
     remote_port: u16,
     local_port: u16,
     state: TCPState,
@@ -85,7 +85,7 @@ pub struct TCPReassembler {
 
 struct TCPSendParams<'a> {
     source_port: u16,
-    dest_ip: util::IPv4Addr,
+    dest_ip: util::IPAddr,
     dest_port: u16,
     seq_num: u32,
     ack_num: u32,
@@ -101,7 +101,7 @@ struct TCPSendParams<'a> {
 type SocketReference = Arc<(Mutex<TCPSocket>, Condvar)>;
 
 /// Each socket is uniquely identified by the tuple of remote_ip/remote_port/local_port
-type SocketKey = (util::IPv4Addr, u16, u16);
+type SocketKey = (util::IPAddr, u16, u16);
 type PortMap = HashMap<SocketKey, SocketReference>;
 
 lazy_static! {
@@ -111,7 +111,7 @@ lazy_static! {
 /// Generate a random ephemeral port that doesn't conflict with any open sockets.
 fn find_ephemeral_port(
     guard: &mut MutexGuard<PortMap>,
-    remote_ip: util::IPv4Addr,
+    remote_ip: util::IPAddr,
     remote_port: u16,
 ) -> u16 {
     loop {
@@ -124,9 +124,12 @@ fn find_ephemeral_port(
 }
 
 pub fn tcp_open(
-    remote_ip: util::IPv4Addr,
+    remote_ip: util::IPAddr,
     remote_port: u16,
 ) -> Result<SocketReference, &'static str> {
+    if !matches!(remote_ip, util::IPAddr::V4(_)) {
+        return Err("Only IPv4 is supported");
+    }
 
     let mut portmap_guard = PORT_MAP.lock().unwrap();
     let local_port = find_ephemeral_port(&mut portmap_guard, remote_ip, remote_port);
@@ -297,7 +300,7 @@ fn flags_to_str(flags: u8) -> String {
 }
 
 impl TCPSocket {
-    fn new(remote_ip: util::IPv4Addr, remote_port: u16, local_port: u16) -> TCPSocket {
+    fn new(remote_ip: util::IPAddr, remote_port: u16, local_port: u16) -> TCPSocket {
         TCPSocket {
             remote_ip,
             remote_port,
@@ -458,7 +461,7 @@ const TCP_HEADER_LEN: usize = 20;
 //    +---------------------------------------------------------------+
 //
 
-pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPv4Addr) {
+pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
     let packet_length = packet.len();
     let header = packet.header_mut();
     let source_port = util::get_be16(&header[0..2]);

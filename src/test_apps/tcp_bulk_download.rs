@@ -26,7 +26,7 @@ fn main() {
     println!("Press key to connect");
     let _ = std::io::stdin().read(&mut [0u8]).unwrap();
 
-    let result = tcp::tcp_open(util::IPv4Addr::new_from(&[10u8, 0, 0, 1]), 3000);
+    let result = tcp::tcp_open(util::IPAddr::new_from(&[10u8, 0, 0, 1]), 3000);
     if result.is_err() {
         println!("Failed to open socket: {}", result.err().unwrap());
         return;

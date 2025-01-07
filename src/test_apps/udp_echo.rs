@@ -28,7 +28,7 @@ fn main() {
     let mut socket = result.unwrap();
 
     loop {
-        let mut source_addr: util::IPv4Addr = util::IPv4Addr::new();
+        let mut source_addr: util::IPAddr = util::IPAddr::new();
         let mut source_port: u16 = 0;
         let mut data = [0; 1500];
 
@@ -39,12 +39,16 @@ fn main() {
         );
 
         util::print_binary(&data[..received as usize]);
-        udp::udp_send(
+        let result = udp::udp_send(
             &mut socket,
             source_addr,
             source_port,
             &data[..received as usize],
         );
+        if result.is_err() {
+            println!("Failed to send packet: {}", result.err().unwrap());
+            return;
+        }
 
         util::print_stats();
     }
