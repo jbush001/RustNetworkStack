@@ -127,10 +127,6 @@ pub fn tcp_open(
     remote_ip: util::IPAddr,
     remote_port: u16,
 ) -> Result<SocketReference, &'static str> {
-    if !matches!(remote_ip, util::IPAddr::V4(_)) {
-        return Err("Only IPv4 is supported");
-    }
-
     let mut portmap_guard = PORT_MAP.lock().unwrap();
     let local_port = find_ephemeral_port(&mut portmap_guard, remote_ip, remote_port);
     let socket = Arc::new((
@@ -742,14 +738,29 @@ fn tcp_output(mut packet: buf::NetBuffer, params: &TCPSendParams) {
 
     // Compute checksum
     // First need to create a pseudo header
-    let mut pseudo_header = [0u8; 12];
-    netif::get_ipaddr().copy_to(&mut pseudo_header[0..4]);
-    params.dest_ip.copy_to(&mut pseudo_header[4..8]);
-    pseudo_header[8] = 0; // Reserved
-    pseudo_header[9] = ip::PROTO_TCP; // Protocol
-    util::set_be16(&mut pseudo_header[10..12], packet_length); // TCP length (header + data)
+    let ph_sum = match params.dest_ip {
+        util::IPAddr::V4(_) => {
+            let mut pseudo_header = [0u8; 12];
+            netif::get_ipaddr().0.copy_to(&mut pseudo_header[0..4]);
+            params.dest_ip.copy_to(&mut pseudo_header[4..8]);
+            pseudo_header[8] = 0; // Reserved
+            pseudo_header[9] = ip::PROTO_TCP; // Protocol
+            util::set_be16(&mut pseudo_header[10..12], packet_length); // TCP length (header + data)
 
-    let ph_sum = util::compute_ones_comp(0, &pseudo_header);
+            util::compute_ones_comp(0, &pseudo_header)
+        }
+
+        util::IPAddr::V6(_) => {
+            let mut pseudo_header = [0u8; 40];
+            netif::get_ipaddr().1.copy_to(&mut pseudo_header[0..16]);
+            params.dest_ip.copy_to(&mut pseudo_header[16..32]);
+            util::set_be32(&mut pseudo_header[32..36], packet_length as u32); // TCP length (header + data)
+            pseudo_header[39] = ip::PROTO_TCP; // Protocol
+
+            util::compute_ones_comp(0, &pseudo_header)
+        }
+    };
+
     let checksum = util::compute_buffer_ones_comp(ph_sum, &packet) ^ 0xffff;
 
     let header = packet.header_mut();

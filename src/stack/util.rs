@@ -29,19 +29,21 @@ impl IPAddr {
         IPAddr::V4([0, 0, 0, 0])
     }
 
-    pub fn new_v4(addr: &[u8]) -> Self {
+    fn new_v4(addr: &[u8]) -> Self {
         IPAddr::V4(addr.try_into().unwrap())
     }
 
-    pub fn new_v6(addr: &[u8]) -> Self {
+    fn new_v6(addr: &[u8]) -> Self {
         IPAddr::V6(addr.try_into().unwrap())
     }
 
     pub fn new_from(addr: &[u8]) -> Self {
         if addr.len() == 4 {
             Self::new_v4(addr)
-        } else {
+        } else if addr.len() == 16 {
             Self::new_v6(addr)
+        } else {
+            panic!("Invalid IP address length");
         }
     }
 
@@ -75,7 +77,7 @@ impl std::fmt::Display for IPAddr {
     }
 }
 
-// Compute one's complement sum, per RFV 1071
+// Compute one's complement sum, per RFC 1071
 // https://datatracker.ietf.org/doc/html/rfc1071
 pub fn compute_ones_comp(in_checksum: u16, slice: &[u8]) -> u16 {
     let mut checksum: u32 = in_checksum as u32;
@@ -307,7 +309,7 @@ mod tests {
     #[test]
     fn test_ip_to_str_v4() {
         assert_eq!(
-            super::IPAddr::new_v4(&[18u8, 52, 86, 120]).to_string(),
+            super::IPAddr::new(&[18u8, 52, 86, 120]).to_string(),
             "18.52.86.120"
         );
     }
@@ -315,7 +317,7 @@ mod tests {
     #[test]
     fn test_ip_to_str_v6() {
         assert_eq!(
-            super::IPAddr::new_v6(
+            super::IPAddr::new(
                 &[0x20u8, 0x1, 0x0d, 0xb8, 0xac, 0x10, 0xfe, 0x01, 0, 0, 0, 0, 0, 0, 0, 0]
             ).to_string(),
             "2001:0db8:ac10:fe01::::"

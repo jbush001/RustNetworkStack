@@ -84,6 +84,8 @@ Now try pinging:
     64 bytes from 10.0.0.2: icmp_seq=3 ttl=64 time=1.01 ms
     64 bytes from 10.0.0.2: icmp_seq=4 ttl=64 time=2.10 ms
 
+*ICMP v6 is currently not implemented*
+
 At the end of this test (As with any), you can kill the server
 with kill %1 (or just launch it in another terminal window so
 you can use ctrl-C)
@@ -93,6 +95,11 @@ you can use ctrl-C)
     sudo ./target/debug/udp_echo &
     python3 scripts/udp_test.py 10.0.0.2
 
+To test IPv6:
+
+    sudo ./target/debug/udp_echo v6 &
+    python3 scripts/udp_test.py fe80::2 v6
+
 ### TCP Download 1
 
     python3 scripts/chargen_server.py &
@@ -100,14 +107,22 @@ you can use ctrl-C)
 
 Press a key to start the transfer
 
+To test IPv6:
+
+    python3 scripts/chargen_server.py v6 &
+    sudo ./target/debug/tcp_bulk_download v6
+
 ### TCP Download 2
 
     python3 -m http.server 3000 &
     sudo ./target/debug/tcp_bulk_download
+
+(http.server doesn't support IPv6)
 
 ### TCP Upload
 
     python3 scripts/sink_server.py 3000 &
     sudo ./target/debug/tcp_bulk_upload
 
+(add v6 param as above)
 

@@ -19,8 +19,15 @@ import sys
 
 PORT = 8000
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(('10.0.0.1', PORT))
+v6 = len(sys.argv) > 2 and sys.argv[2] == 'v6'
+
+sock = socket.socket(socket.AF_INET6 if v6 else socket.AF_INET, socket.SOCK_DGRAM)
+if v6:
+    bindaddr = ('fe80::1', PORT, 0, socket.if_nametoindex('tun0'))
+else:
+    bindaddr = ('10.0.0.1', PORT)
+
+sock.bind(bindaddr)
 for _ in range(20):
     sock.sendto(bytes('Test message ' * 100, 'UTF-8'), (sys.argv[1], PORT))
     data, _ = sock.recvfrom(1024)

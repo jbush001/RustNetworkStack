@@ -18,13 +18,20 @@
 # a continuous stream of characters from the ASCII character set.
 
 import socket
+import sys
+
+v6 = len(sys.argv) > 1 and sys.argv[1] == 'v6'
+if v6:
+    print('Using IPv6')
+else:
+    print('Using IPv4')
 
 PORT = 3000
 
 PATTERN = ''.join(chr(i) for i in range(32, 126)) * 2
 LINE_LEN = 72
 
-listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+listen_sock = socket.socket(socket.AF_INET6 if v6 else socket.AF_INET, socket.SOCK_STREAM)
 listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 listen_sock.bind(('', PORT))
 listen_sock.listen(1)

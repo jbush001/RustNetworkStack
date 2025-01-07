@@ -18,14 +18,24 @@ use std::io::Read;
 use std::thread::sleep;
 use std::time::Duration;
 use netstack::{init_netstack, tcp, util};
+use std::env;
 
 fn main() {
+    let args: Vec<String> = env::args().collect();
+    let ipv6 = args.len() > 1 && args[1] == "6v";
+
     init_netstack();
 
     println!("Press key to connect");
     let _ = std::io::stdin().read(&mut [0u8]).unwrap();
 
-    let result = tcp::tcp_open(util::IPAddr::new_from(&[10u8, 0, 0, 1]), 3000);
+    let addr = if ipv6 {
+        util::IPAddr::new_from(&[0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1])
+    } else {
+        util::IPAddr::new_from(&[10, 0, 0, 1])
+    };
+
+    let result = tcp::tcp_open(addr, 3000);
     if result.is_err() {
         println!("Failed to open socket: {}", result.err().unwrap());
         return;

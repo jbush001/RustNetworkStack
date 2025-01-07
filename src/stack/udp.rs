@@ -16,6 +16,7 @@
 
 use crate::buf;
 use crate::ip;
+use crate::netif;
 use crate::util;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
@@ -90,10 +91,6 @@ pub fn udp_send(
     dest_port: u16,
     data: &[u8],
 ) -> Result<(), &'static str> {
-    if !matches!(dest_addr, util::IPAddr::V4(_)) {
-        return Err("Only IPv4 is supported");
-    }
-
     let (mutex, _cond) = &**socket;
     let guard = mutex.lock().unwrap();
 
@@ -141,7 +138,7 @@ pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPAddr) {
 
 fn udp_output(
     mut packet: buf::NetBuffer,
-    dest_addr: util::IPAddr,
+    dest_ip: util::IPAddr,
     source_port: u16,
     dest_port: u16,
 ) {
@@ -151,7 +148,25 @@ fn udp_output(
     util::set_be16(&mut header[0..2], source_port);
     util::set_be16(&mut header[2..4], dest_port);
     util::set_be16(&mut header[4..6], length);
-    util::set_be16(&mut header[6..8], 0); // Skip computing checksum
 
-    ip::ip_output(packet, ip::PROTO_UDP, dest_addr);
+    let checksum = match dest_ip {
+        util::IPAddr::V4(_) => {
+            0 // Skip for V4, it's not required
+        }
+
+        util::IPAddr::V6(_) => {
+            let mut pseudo_header = [0u8; 40];
+            netif::get_ipaddr().1.copy_to(&mut pseudo_header[0..16]);
+            dest_ip.copy_to(&mut pseudo_header[16..32]);
+            util::set_be32(&mut pseudo_header[32..36], length as u32);
+            pseudo_header[39] = ip::PROTO_UDP; // next header
+
+            let ph_sum = util::compute_ones_comp(0, &pseudo_header);
+            util::compute_buffer_ones_comp(ph_sum, &packet) ^ 0xffff
+        }
+    };
+
+    let header = packet.header_mut();
+    util::set_be16(&mut header[6..8], checksum);
+    ip::ip_output(packet, ip::PROTO_UDP, dest_ip);
 }

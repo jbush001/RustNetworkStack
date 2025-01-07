@@ -62,11 +62,21 @@ int tun_init() {
     sprintf(command_line, "ip route add dev %s 10.0.0.0/24", ifr.ifr_name);
     system(command_line);
 
+    // Same thing for IPv6
+    sprintf(command_line, "ip route add dev %s fe80::/10", ifr.ifr_name);
+    system(command_line);
+
+
     // Address of the host on the virtual network.
     // This is the address our stack will see packets from the host will come
     // from.
     sprintf(command_line, "ip addr add dev %s local 10.0.0.1", ifr.ifr_name);
     system(command_line);
+
+    // And IPv6
+    sprintf(command_line, "ip addr add dev %s local fe80::1", ifr.ifr_name);
+    system(command_line);
+
 
     return 0;
 }
