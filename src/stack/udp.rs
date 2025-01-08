@@ -149,22 +149,18 @@ fn udp_output(
     util::set_be16(&mut header[2..4], dest_port);
     util::set_be16(&mut header[4..6], length);
 
-    let checksum = match dest_ip {
-        util::IPAddr::V4(_) => {
-            0 // Skip for V4, it's not required
-        }
+    let ph_checksum = util::compute_pseudo_header_checksum(
+        if matches!(dest_ip, util::IPAddr::V4(_)) {
+            netif::get_ipaddr().0
+        } else {
+            netif::get_ipaddr().1
+        },
 
-        util::IPAddr::V6(_) => {
-            let mut pseudo_header = [0u8; 40];
-            netif::get_ipaddr().1.copy_to(&mut pseudo_header[0..16]);
-            dest_ip.copy_to(&mut pseudo_header[16..32]);
-            util::set_be32(&mut pseudo_header[32..36], length as u32);
-            pseudo_header[39] = ip::PROTO_UDP; // next header
-
-            let ph_sum = util::compute_ones_comp(0, &pseudo_header);
-            util::compute_buffer_ones_comp(ph_sum, &packet) ^ 0xffff
-        }
-    };
+        dest_ip,
+        length as usize,
+        ip::PROTO_UDP,
+    );
+    let checksum = util::compute_buffer_ones_comp(ph_checksum, &packet) ^ 0xffff;
 
     let header = packet.header_mut();
     util::set_be16(&mut header[6..8], checksum);

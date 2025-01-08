@@ -338,7 +338,7 @@ mod tests {
     #[test]
     fn test_ip_to_str_v4() {
         assert_eq!(
-            super::IPAddr::new(&[18u8, 52, 86, 120]).to_string(),
+            super::IPAddr::new_from(&[18u8, 52, 86, 120]).to_string(),
             "18.52.86.120"
         );
     }
@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn test_ip_to_str_v6() {
         assert_eq!(
-            super::IPAddr::new(
+            super::IPAddr::new_from(
                 &[0x20u8, 0x1, 0x0d, 0xb8, 0xac, 0x10, 0xfe, 0x01, 0, 0, 0, 0, 0, 0, 0, 0]
             ).to_string(),
             "2001:0db8:ac10:fe01::::"

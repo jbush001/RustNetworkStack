@@ -113,6 +113,8 @@ fn ip_input_v6(mut packet: buf::NetBuffer) {
     let protocol = header[6];
     let source_addr = util::IPAddr::new_from(&header[8..24]);
 
+    // No IP header checksum...
+
     packet.trim_head(IPV6_HEADER_LEN);
     ip_input_common(packet, protocol, source_addr);
 }

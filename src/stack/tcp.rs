@@ -458,6 +458,23 @@ const TCP_HEADER_LEN: usize = 20;
 //
 
 pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
+    // Validate checksum
+    let ph_checksum = util::compute_pseudo_header_checksum(
+        source_ip,
+        if matches!(source_ip, util::IPAddr::V4(_)) {
+            netif::get_ipaddr().0
+        } else {
+            netif::get_ipaddr().1
+        },
+        packet.len(),
+        ip::PROTO_TCP,
+    );
+    let checksum = util::compute_buffer_ones_comp(ph_checksum, &packet) ^ 0xffff;
+    if checksum != 0 {
+        println!("TCP checksum error");
+        return;
+    }
+
     let packet_length = packet.len();
     let header = packet.header_mut();
     let source_port = util::get_be16(&header[0..2]);
@@ -738,30 +755,18 @@ fn tcp_output(mut packet: buf::NetBuffer, params: &TCPSendParams) {
 
     // Compute checksum
     // First need to create a pseudo header
-    let ph_sum = match params.dest_ip {
-        util::IPAddr::V4(_) => {
-            let mut pseudo_header = [0u8; 12];
-            netif::get_ipaddr().0.copy_to(&mut pseudo_header[0..4]);
-            params.dest_ip.copy_to(&mut pseudo_header[4..8]);
-            pseudo_header[8] = 0; // Reserved
-            pseudo_header[9] = ip::PROTO_TCP; // Protocol
-            util::set_be16(&mut pseudo_header[10..12], packet_length); // TCP length (header + data)
+    let ph_checksum = util::compute_pseudo_header_checksum(
+        if matches!(params.dest_ip, util::IPAddr::V4(_)) {
+            netif::get_ipaddr().0
+        } else {
+            netif::get_ipaddr().1
+        },
+        params.dest_ip,
+        packet_length as usize,
+        ip::PROTO_TCP,
+    );
 
-            util::compute_ones_comp(0, &pseudo_header)
-        }
-
-        util::IPAddr::V6(_) => {
-            let mut pseudo_header = [0u8; 40];
-            netif::get_ipaddr().1.copy_to(&mut pseudo_header[0..16]);
-            params.dest_ip.copy_to(&mut pseudo_header[16..32]);
-            util::set_be32(&mut pseudo_header[32..36], packet_length as u32); // TCP length (header + data)
-            pseudo_header[39] = ip::PROTO_TCP; // Protocol
-
-            util::compute_ones_comp(0, &pseudo_header)
-        }
-    };
-
-    let checksum = util::compute_buffer_ones_comp(ph_sum, &packet) ^ 0xffff;
+    let checksum = util::compute_buffer_ones_comp(ph_checksum, &packet) ^ 0xffff;
 
     let header = packet.header_mut();
     util::set_be16(&mut header[16..18], checksum);
