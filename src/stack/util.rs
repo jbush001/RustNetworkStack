@@ -369,4 +369,22 @@ mod tests {
         assert_eq!(super::seq_gt(0x80000000, 0x7fffffff), true);
         assert_eq!(super::seq_gt(21, 21), false);
     }
+
+    #[test]
+    fn test_compute_pseudo_header_checksum_v4() {
+        let source_ip = super::IPAddr::new_from(&[192, 168, 1, 1]);
+        let dest_ip = super::IPAddr::new_from(&[192, 168, 1, 2]);
+        assert_eq!(super::compute_pseudo_header_checksum(source_ip, dest_ip, 20, 6), 0x836e);
+    }
+
+    #[test]
+    fn test_compute_pseudo_header_checksum_v6() {
+        let source_ip = super::IPAddr::new_from(&[
+            0x20, 0x01, 0x0d, 0xb8, 0xac, 0x10, 0xfe, 0x01, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]);
+        let dest_ip = super::IPAddr::new_from(&[
+            0x20, 0x01, 0x0d, 0xb8, 0xac, 0x10, 0xfe, 0x02, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]);
+        assert_eq!(super::compute_pseudo_header_checksum(source_ip, dest_ip, 20, 6), 0xafb2);
+    }
 }
