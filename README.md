@@ -84,7 +84,10 @@ Now try pinging:
     64 bytes from 10.0.0.2: icmp_seq=3 ttl=64 time=1.01 ms
     64 bytes from 10.0.0.2: icmp_seq=4 ttl=64 time=2.10 ms
 
-*ICMP v6 is currently not implemented*
+
+Or IPv6
+
+    $ ping fe80::2%tun0
 
 At the end of this test (As with any), you can kill the server
 with kill %1 (or just launch it in another terminal window so

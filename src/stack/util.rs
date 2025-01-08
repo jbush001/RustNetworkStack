@@ -155,6 +155,35 @@ pub fn wrapping_max(val1: u32, val2: u32) -> u32 {
     if seq_gt(val1, val2) { val1 } else { val2 }
 }
 
+pub fn compute_pseudo_header_checksum(
+    source_ip: IPAddr,
+    dest_ip: IPAddr,
+    length: usize,
+    protocol: u8,
+) -> u16 {
+    match dest_ip {
+        IPAddr::V4(_) => {
+            let mut pseudo_header = [0u8; 12];
+            source_ip.copy_to(&mut pseudo_header[0..4]);
+            dest_ip.copy_to(&mut pseudo_header[4..8]);
+            pseudo_header[9] = protocol;
+            set_be16(&mut pseudo_header[10..12], length as u16);
+
+            compute_ones_comp(0, &pseudo_header)
+        }
+
+        IPAddr::V6(_) => {
+            let mut pseudo_header = [0u8; 40];
+            source_ip.copy_to(&mut pseudo_header[0..16]);
+            dest_ip.copy_to(&mut pseudo_header[16..32]);
+            set_be32(&mut pseudo_header[32..36], length as u32);
+            pseudo_header[39] = protocol;
+
+            compute_ones_comp(0, &pseudo_header)
+        }
+    }
+}
+
 pub struct PerfCounter(AtomicU32);
 
 impl PerfCounter {

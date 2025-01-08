@@ -23,6 +23,7 @@ use crate::util;
 use std::sync::atomic::{AtomicU16, Ordering};
 
 pub const PROTO_ICMPV4: u8 = 1;
+pub const PROTO_ICMPV6: u8 = 58;
 pub const PROTO_TCP: u8 = 6;
 pub const PROTO_UDP: u8 = 17;
 
@@ -86,13 +87,7 @@ pub fn ip_input_v4(mut packet: buf::NetBuffer) {
     let source_addr = util::IPAddr::new_from(&header[12..16]);
 
     packet.trim_head(header_len);
-
-    match protocol {
-        PROTO_ICMPV4 => icmp::icmp_input_v4(packet, source_addr),
-        PROTO_TCP => tcp::tcp_input(packet, source_addr),
-        PROTO_UDP => udp::udp_input(packet, source_addr),
-        _ => println!("IPv4: Unknown protocol {}", protocol),
-    }
+    ip_input_common(packet, protocol, source_addr);
 }
 
 //
@@ -119,12 +114,16 @@ fn ip_input_v6(mut packet: buf::NetBuffer) {
     let source_addr = util::IPAddr::new_from(&header[8..24]);
 
     packet.trim_head(IPV6_HEADER_LEN);
+    ip_input_common(packet, protocol, source_addr);
+}
 
+fn ip_input_common(packet: buf::NetBuffer, protocol: u8, source_addr: util::IPAddr) {
     match protocol {
         PROTO_ICMPV4 => icmp::icmp_input_v4(packet, source_addr),
+        PROTO_ICMPV6 => icmp::icmp_input_v6(packet, source_addr),
         PROTO_TCP => tcp::tcp_input(packet, source_addr),
         PROTO_UDP => udp::udp_input(packet, source_addr),
-        _ => println!("IPv6: Unknown protocol {}", protocol),
+        _ => println!("IP: Unknown protocol {}", protocol),
     }
 }
 
