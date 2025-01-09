@@ -89,7 +89,7 @@ pub fn compute_ones_comp(in_checksum: u16, slice: &[u8]) -> u16 {
     }
 
     if i < slice.len() {
-        checksum += slice[i] as u32;
+        checksum += (slice[i] as u32) << 8;
     }
 
     while checksum > 0xffff {
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_compute_ones_comp_odd_length() {
-        assert_eq!(super::compute_ones_comp(0, &[0x12, 0x34, 0x56]), 0x128a);
+        assert_eq!(super::compute_ones_comp(0, &[0x12, 0x34, 0x56]), 0x6834);
     }
 
     #[test]
