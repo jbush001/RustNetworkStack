@@ -27,6 +27,11 @@ path = "src/test_apps/udp_echo.rs"
 name = "tcp_bulk_upload"
 path = "src/test_apps/tcp_bulk_upload.rs"
 
+
+[[bin]]
+name = "web_server"
+path = "src/test_apps/web_server.rs"
+
 [[bench]]
 name = "buf_bench"
 harness = false

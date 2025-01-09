@@ -47,6 +47,8 @@ enum TCPState {
     FinWait2,
     Closing,
     TimeWait,
+    Listen,
+    SynReceived,
 }
 
 const FLAG_FIN: u8 = 1;
@@ -76,6 +78,9 @@ pub struct TCPSocket {
     response_timer_id: i32,
     request_retry_count: u32,
     transmit_mss: usize,
+
+    // Listen
+    socket_queue: Vec<SocketReference>,
 }
 
 pub struct TCPReassembler {
@@ -163,6 +168,16 @@ pub fn tcp_close(socket: &mut SocketReference) {
 
     println!("{} tcp_close: state {:?}", guard, guard.state);
     match guard.state {
+        TCPState::Listen => {
+            let local_port = guard.local_port;
+            guard.set_state(TCPState::Closed);
+            drop(guard); // Unlock to avoid deadlock
+            PORT_MAP
+                .lock()
+                .unwrap()
+                .remove(&(util::IPAddr::new(), 0, local_port));
+        }
+
         TCPState::Established => {
             guard.send_packet(buf::NetBuffer::new(), FLAG_FIN | FLAG_ACK);
             set_response_timer(&mut guard, socket.clone());
@@ -248,6 +263,39 @@ pub fn tcp_write(socket: &mut SocketReference, data: &[u8]) -> i32 {
     data.len() as i32
 }
 
+pub fn tcp_listen(port: u16) -> Result<SocketReference, &'static str> {
+    let socket = Arc::new((
+        Mutex::new(TCPSocket::new(util::IPAddr::new(), 0, port)),
+        Condvar::new(),
+    ));
+
+    let (mutex, _cond) = &*socket;
+    let mut guard = mutex.lock().unwrap();
+    guard.set_state(TCPState::Listen);
+    drop(guard);
+
+    let mut portmap_guard = PORT_MAP.lock().unwrap();
+    if portmap_guard.contains_key(&(util::IPAddr::new(), 0, port)) {
+        return Err("Port already in use");
+    }
+
+    portmap_guard.insert((util::IPAddr::new(), 0, port), socket.clone());
+    drop(portmap_guard);
+
+    Ok(socket)
+}
+
+pub fn tcp_accept(socket: &mut SocketReference) -> Result<SocketReference, &'static str>{
+    let (mutex, cond) = &**socket;
+    let mut guard = mutex.lock().unwrap();
+
+    while guard.socket_queue.is_empty() {
+        guard = cond.wait(guard).unwrap();
+    }
+
+    Ok(guard.socket_queue.remove(0))
+}
+
 fn retransmit(socket: SocketReference) {
     let (mutex, _cond) = &*socket;
     let mut guard = mutex.lock().unwrap();
@@ -314,6 +362,7 @@ impl TCPSocket {
             request_retry_count: 0,
             highest_seq_received: 0,
             transmit_mss: DEFAULT_TCP_MSS,
+            socket_queue: Vec::new(),
         }
     }
 
@@ -503,6 +552,17 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
     let mut opt_offset = 20;
     while opt_offset < header_length {
         let option_type = header[opt_offset];
+        if option_type == 0 {
+            break;
+        }
+
+        if option_type == 1 {
+            // No-op
+            opt_offset += 1;
+            continue;
+        }
+
+
         let option_length = header[opt_offset + 1] as usize;
         if option_type == 0 {
             break;
@@ -512,7 +572,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
             max_segment_size = util::get_be16(&header[opt_offset + 2..opt_offset + 4]) as usize;
         }
 
-        println!("option {} length {}", option_type, option_length);
+        println!("offset {} option {} length {}", opt_offset, option_type, option_length);
         opt_offset += option_length;
     }
 
@@ -522,19 +582,40 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
     let mut port_map_guard = PORT_MAP.lock().unwrap();
     let pm_entry = port_map_guard.get_mut(&(source_ip, source_port, dest_port));
     if pm_entry.is_none() {
-        let response = buf::NetBuffer::new();
-        let params = TCPSendParams {
-            source_port: dest_port,
-            dest_ip: source_ip,
-            dest_port: source_port,
-            seq_num: 1,
-            ack_num: seq_num + 1,
-            flags: FLAG_RST | FLAG_ACK,
-            window: 0,
-            options: &[],
-        };
+        // This might be a new socket, check for a listen socket
+        let listen_entry = port_map_guard.get_mut(&(util::IPAddr::new(), 0, dest_port));
+        if listen_entry.is_none() || (flags & FLAG_SYN) == 0 {
+            let response = buf::NetBuffer::new();
+            let params = TCPSendParams {
+                source_port: dest_port,
+                dest_ip: source_ip,
+                dest_port: source_port,
+                seq_num: 1,
+                ack_num: seq_num + 1,
+                flags: FLAG_RST | FLAG_ACK,
+                window: 0,
+                options: &[],
+            };
 
-        tcp_output(response, &params);
+            tcp_output(response, &params);
+            return;
+        }
+
+        let listen_socket = listen_entry
+            .expect("just checked if listen_entry is none above")
+            .clone();
+        let new_socket = handle_new_connection(
+            listen_socket,
+            source_ip,
+            source_port,
+            dest_port,
+            seq_num,
+            ack_num,
+            remote_window_size,
+            max_segment_size
+        );
+
+        port_map_guard.insert((source_ip, source_port, dest_port), new_socket);
         return;
     }
 
@@ -647,6 +728,16 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
             }
         }
 
+        TCPState::SynReceived => {
+            if (flags & FLAG_ACK) != 0 {
+                guard.set_state(TCPState::Established);
+
+                // The SYN consumes a sequence number.
+                guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(1);
+
+            }
+        }
+
         TCPState::Established => {
             if (flags & FLAG_FIN) != 0 {
                 guard.set_state(TCPState::CloseWait);
@@ -732,6 +823,52 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
             println!("{}: Received packet in state: {:?}", guard, guard.state);
         }
     }
+}
+
+fn handle_new_connection(
+    listen_socket: SocketReference,
+    source_ip: util::IPAddr,
+    source_port: u16,
+    dest_port: u16,
+    seq_num: u32,
+    ack_num: u32,
+    remote_window_size: u16,
+    max_segment_size: usize,
+) -> SocketReference {
+    println!(
+        "New connection from {}:{} to {}",
+        source_ip, source_port, dest_port
+    );
+    let new_socket = Arc::new((
+        Mutex::new(TCPSocket::new(source_ip, source_port, dest_port)),
+        Condvar::new(),
+    ));
+
+    let (mutex, _cond) = &*new_socket;
+    let mut guard = mutex.lock().unwrap();
+    guard.remote_ip = source_ip;
+    guard.remote_port = source_port;
+    guard.set_state(TCPState::SynReceived);
+    guard.transmit_window_max = ack_num.wrapping_add(remote_window_size as u32);
+    guard.transmit_mss = max_segment_size;
+    guard.highest_seq_received = seq_num.wrapping_add(1);
+    guard.reassembler.set_next_expect(seq_num.wrapping_add(1));
+
+    guard.send_packet(buf::NetBuffer::new(), FLAG_SYN | FLAG_ACK);
+    set_response_timer(&mut guard, new_socket.clone());
+    drop(guard); // Unlock to avoid deadlock
+
+    let (mutex, cond) = &*listen_socket;
+    let mut guard = mutex.lock().unwrap();
+    assert!(
+        matches!(guard.state, TCPState::Listen),
+        "Listen socket should be in listen state",
+    );
+
+    guard.socket_queue.push(new_socket.clone());
+    cond.notify_all();
+
+    new_socket
 }
 
 fn tcp_output(mut packet: buf::NetBuffer, params: &TCPSendParams) {

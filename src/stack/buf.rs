@@ -297,7 +297,7 @@ impl NetBuffer {
     pub fn trim_head(&mut self, size: usize) {
         // This condition suggests a logic error somewhere else in the
         // code, thus better to just assert than silently ignore.
-        assert!(size <= self.len());
+        assert!(size <= self.len(), "Should not trim more than buffer length");
 
         let mut remaining = size;
 
@@ -322,14 +322,20 @@ impl NetBuffer {
         }
 
         self.length -= size;
-        assert!(self.fragments.is_some() || self.length == 0);
+        assert!(
+            self.fragments.is_some() || self.length == 0,
+            "Should not have fragments in an empty buffer"
+        );
     }
 
     pub fn trim_tail(&mut self, size: usize) {
         // This generally suggests a logic error somewhere else in the
         // code, thus better to just assert than silently ignore.
+        assert!(
+            size <= self.len(),
+            "Should not trim more than buffer length"
+        );
 
-        assert!(size <= self.len());
 
         if size == self.len() {
             // Remove all data
