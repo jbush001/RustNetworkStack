@@ -241,14 +241,14 @@ impl NetBuffer {
     /// This is used for reading header contents. Note: this slice may be larger
     /// than the size returned by add_header.
     pub fn header(&self) -> &[u8] {
-        assert!(self.fragments.is_some()); // Shouldn't call on empty buffer
+        assert!(self.fragments.is_some(), "Shouldn't call header on empty buffer");
         let head_frag = self.fragments.as_ref().unwrap();
         &head_frag.data[head_frag.range.clone()]
     }
 
     /// Same as header, but mutable. Used for writing the header.
     pub fn header_mut(&mut self) -> &mut [u8] {
-        assert!(self.fragments.is_some()); // Shouldn't call on empty buffer
+        assert!(self.fragments.is_some(), "Shouldn't call header on empty buffer");
         let head_frag = self.fragments.as_mut().unwrap();
         &mut head_frag.data[head_frag.range.clone()]
     }
@@ -262,7 +262,7 @@ impl NetBuffer {
     /// span multiple fragments). The contents of the allocated space will be
     /// zeroed out.
     pub fn alloc_header(&mut self, size: usize) {
-        assert!(size <= FRAGMENT_SIZE);
+        assert!(size <= FRAGMENT_SIZE, "Header can't be larger than a fragment");
         if self.fragments.is_none() || self.fragments.as_ref().unwrap().range.start < size {
             // Prepend a new frag. We place the data at the end of the frag
             // to allow space for subsequent headers to be added.
@@ -473,7 +473,7 @@ impl<'a> Iterator for BufferIterator<'a> {
 
         let frag = self.current_frag.as_ref().unwrap();
         let slice_length = cmp::min(frag.len(), self.remaining);
-        assert!(self.remaining >= slice_length);
+        assert!(self.remaining >= slice_length, "Should not copy more than remaining");
         let start_offs = frag.range.start;
         let slice = &frag.data[start_offs..start_offs + slice_length];
         self.remaining -= slice_length;
@@ -496,8 +496,8 @@ mod tests {
         while ptr.is_some() {
             let frag = ptr.as_ref().unwrap();
             // Should be non-empty and these shouldn't cross
-            assert!(frag.range.start < frag.range.end);
-            assert!(frag.range.end <= super::FRAGMENT_SIZE);
+            assert!(frag.range.start < frag.range.end, "Invalid fragment range");
+            assert!(frag.range.end <= super::FRAGMENT_SIZE, "Fragment range too large");
             actual_length += frag.range.end - frag.range.start;
             ptr = &frag.next;
         }
