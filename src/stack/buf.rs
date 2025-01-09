@@ -16,6 +16,7 @@
 
 use lazy_static::lazy_static;
 use std::cmp;
+use std::ops::Range;
 use std::sync::Mutex;
 use crate::util;
 
@@ -67,8 +68,7 @@ const FRAGMENT_SIZE: usize = 512;
 /// measurable performance impact.
 struct BufferFragment {
     next: FragPointer, // Next fragment in linked list.
-    start: usize,      // Offset into data array of first valid byte of data.
-    end: usize,        // Same for last. This is exclusive (one past last byte)
+    range: Range<usize>, // Start and end of valid data in this fragment.
     data: [u8; FRAGMENT_SIZE],
 }
 
@@ -134,9 +134,7 @@ impl FragmentPool {
             self.free_list.replace(new_frag.next.take().unwrap());
         }
 
-        new_frag.start = 0;
-        new_frag.end = 0;
-
+        new_frag.range = 0..0;
         new_frag
     }
 
@@ -157,14 +155,13 @@ impl BufferFragment {
     pub fn new() -> BufferFragment {
         BufferFragment {
             data: [0; FRAGMENT_SIZE],
-            start: 0,
-            end: 0,
+            range: 0..0,
             next: None,
         }
     }
 
     pub fn len(&self) -> usize {
-        self.end - self.start
+        self.range.len()
     }
 }
 
@@ -212,7 +209,7 @@ impl NetBuffer {
         while to_add > 0 {
             let mut new_frag = guard.alloc();
             let frag_size = cmp::min(to_add, FRAGMENT_SIZE);
-            new_frag.end = frag_size;
+            new_frag.range = 0..frag_size;
             to_add -= frag_size;
             new_frag.next = buf.fragments.take();
             buf.fragments = Some(new_frag);
@@ -246,14 +243,14 @@ impl NetBuffer {
     pub fn header(&self) -> &[u8] {
         assert!(self.fragments.is_some()); // Shouldn't call on empty buffer
         let head_frag = self.fragments.as_ref().unwrap();
-        &head_frag.data[head_frag.start..head_frag.end]
+        &head_frag.data[head_frag.range.clone()]
     }
 
     /// Same as header, but mutable. Used for writing the header.
     pub fn header_mut(&mut self) -> &mut [u8] {
         assert!(self.fragments.is_some()); // Shouldn't call on empty buffer
         let head_frag = self.fragments.as_mut().unwrap();
-        &mut head_frag.data[head_frag.start..head_frag.end]
+        &mut head_frag.data[head_frag.range.clone()]
     }
 
     /// Reserve space for another header to be prepended to the buffer
@@ -266,12 +263,11 @@ impl NetBuffer {
     /// zeroed out.
     pub fn alloc_header(&mut self, size: usize) {
         assert!(size <= FRAGMENT_SIZE);
-        if self.fragments.is_none() || self.fragments.as_ref().unwrap().start < size {
+        if self.fragments.is_none() || self.fragments.as_ref().unwrap().range.start < size {
             // Prepend a new frag. We place the data at the end of the frag
             // to allow space for subsequent headers to be added.
             let mut new_head_frag = FRAGMENT_POOL.lock().unwrap().alloc();
-            new_head_frag.start = FRAGMENT_SIZE - size;
-            new_head_frag.end = FRAGMENT_SIZE;
+            new_head_frag.range = FRAGMENT_SIZE - size..FRAGMENT_SIZE;
             new_head_frag.next = if self.fragments.is_none() {
                 None
             } else {
@@ -283,12 +279,12 @@ impl NetBuffer {
             // There is sufficient space in the first frag to add the header.
             // Adjust the start of the frag head
             let frag = self.fragments.as_mut().unwrap();
-            frag.start -= size;
+            frag.range.start -= size;
         }
 
         // Zero out contents of header.
         let frag = self.fragments.as_mut().unwrap();
-        frag.data[frag.start..frag.start + size].fill(0);
+        frag.data[frag.range.start..frag.range.start + size].fill(0);
 
         self.length += size;
     }
@@ -318,7 +314,7 @@ impl NetBuffer {
         // Truncate the first buffer
         if remaining > 0 {
             let frag = self.fragments.as_mut().unwrap();
-            frag.start += remaining;
+            frag.range.start += remaining;
         }
 
         self.length -= size;
@@ -367,7 +363,7 @@ impl NetBuffer {
         // Truncate the partial fragment
         let partial = last_frag.as_mut().unwrap();
         if partial.len() > remaining {
-            partial.end = partial.start + remaining;
+            partial.range.end = partial.range.start + remaining;
         }
 
         // Free any fragments that come after last_frag
@@ -404,12 +400,12 @@ impl NetBuffer {
         while data_offset < data.len() {
             let frag = last_frag.as_mut().unwrap();
             let copy_len = cmp::min(
-                FRAGMENT_SIZE - frag.end,
+                FRAGMENT_SIZE - frag.range.end,
                 data.len() - data_offset
             );
-            frag.data[frag.end..frag.end + copy_len]
+            frag.data[frag.range.end..frag.range.end + copy_len]
                 .copy_from_slice(&data[data_offset..data_offset + copy_len]);
-            frag.end += copy_len;
+            frag.range.end += copy_len;
             data_offset += copy_len;
             if data_offset < data.len() {
                 let new_frag = Some(guard.alloc());
@@ -478,7 +474,7 @@ impl<'a> Iterator for BufferIterator<'a> {
         let frag = self.current_frag.as_ref().unwrap();
         let slice_length = cmp::min(frag.len(), self.remaining);
         assert!(self.remaining >= slice_length);
-        let start_offs = frag.start;
+        let start_offs = frag.range.start;
         let slice = &frag.data[start_offs..start_offs + slice_length];
         self.remaining -= slice_length;
         self.current_frag = &frag.next;
@@ -500,9 +496,9 @@ mod tests {
         while ptr.is_some() {
             let frag = ptr.as_ref().unwrap();
             // Should be non-empty and these shouldn't cross
-            assert!(frag.start < frag.end);
-            assert!(frag.end <= super::FRAGMENT_SIZE);
-            actual_length += frag.end - frag.start;
+            assert!(frag.range.start < frag.range.end);
+            assert!(frag.range.end <= super::FRAGMENT_SIZE);
+            actual_length += frag.range.end - frag.range.start;
             ptr = &frag.next;
         }
 
@@ -786,7 +782,7 @@ mod tests {
 
         let mut dest = [0; 492];
         buf.copy_to_slice(&mut dest);
-        assert_eq!(dest[0..492], [1; 492]);
+        assert_eq!(dest[..492], [1; 492]);
     }
 
     #[test]
@@ -975,7 +971,7 @@ mod tests {
         // Check contents
         let mut dest = [0; 1536];
         buf1.copy_to_slice(&mut dest);
-        assert_eq!(dest[0..512], [1; 512]);
+        assert_eq!(dest[..512], [1; 512]);
         assert_eq!(dest[512..1024], [2; 512]);
         assert_eq!(dest[1024..1536], [3; 512]);
         assert_eq!(buf1.len(), 3072);
@@ -993,7 +989,7 @@ mod tests {
 
         let mut dest = [0; 512];
         buf1.copy_to_slice(&mut dest);
-        assert_eq!(dest[0..512], [1; 512]);
+        assert_eq!(dest[..512], [1; 512]);
     }
 
     #[test]

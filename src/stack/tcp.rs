@@ -103,7 +103,7 @@ struct TCPSendParams<'a> {
 // API that are waiting, for example, for a reader waiting for new data or
 // on open. This must be stored outside the socket structure itself
 // Because the mutex is released while waiting on it.
-type SocketReference = Arc<(Mutex<TCPSocket>, Condvar)>;
+pub type SocketReference = Arc<(Mutex<TCPSocket>, Condvar)>;
 
 /// Each socket is uniquely identified by the tuple of remote_ip/remote_port/local_port
 type SocketKey = (util::IPAddr, u16, u16);
