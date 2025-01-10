@@ -14,6 +14,10 @@
 // limitations under the License.
 //
 
+
+// Transmission Control Protocol, as described in RFC 9293
+
+
 use crate::buf;
 use crate::ip;
 use crate::netif;
@@ -507,23 +511,12 @@ const TCP_HEADER_LEN: usize = 20;
 //
 
 pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
-    // Validate checksum
-    let ph_checksum = util::compute_pseudo_header_checksum(
-        source_ip,
-        if matches!(source_ip, util::IPAddr::V4(_)) {
-            netif::get_ipaddr().0
-        } else {
-            netif::get_ipaddr().1
-        },
-        packet.len(),
-        ip::PROTO_TCP,
-    );
-    let checksum = util::compute_buffer_ones_comp(ph_checksum, &packet) ^ 0xffff;
-    if checksum != 0 {
+    if !validate_checksum(&packet, source_ip) {
         println!("TCP checksum error");
         return;
     }
 
+    // Decode header
     let packet_length = packet.len();
     let header = packet.header_mut();
     let source_port = util::get_be16(&header[0..2]);
@@ -547,35 +540,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
     );
 
     // Parse options
-    let mut max_segment_size: usize = 0;
-
-    let mut opt_offset = 20;
-    while opt_offset < header_length {
-        let option_type = header[opt_offset];
-        if option_type == 0 {
-            break;
-        }
-
-        if option_type == 1 {
-            // No-op
-            opt_offset += 1;
-            continue;
-        }
-
-
-        let option_length = header[opt_offset + 1] as usize;
-        if option_type == 0 {
-            break;
-        }
-
-        if option_type == 2 {
-            max_segment_size = util::get_be16(&header[opt_offset + 2..opt_offset + 4]) as usize;
-        }
-
-        println!("offset {} option {} length {}", opt_offset, option_type, option_length);
-        opt_offset += option_length;
-    }
-
+    let options = parse_options(&header[20..header_length]);
     packet.trim_head(header_length);
 
     // Lookup socket
@@ -612,7 +577,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
             seq_num,
             ack_num,
             remote_window_size,
-            max_segment_size
+            options.max_segment_size
         );
 
         port_map_guard.insert((source_ip, source_port, dest_port), new_socket);
@@ -625,16 +590,19 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
     let (mutex, cond) = &*socket;
     let mut guard = mutex.lock().unwrap();
 
-    if max_segment_size != 0 {
-        guard.transmit_mss = max_segment_size;
-        println!("Set max segment size {}", max_segment_size);
+    if options.max_segment_size != 0 {
+        guard.transmit_mss = options.max_segment_size;
+        println!("Set max segment size {}", options.max_segment_size);
     }
 
+    // XXX hack: this should be reset inside the state transitions for
+    // each corresponding path.
     if guard.response_timer_id != -1 {
         timer::cancel_timer(guard.response_timer_id);
         guard.response_timer_id = -1;
     }
 
+    // XXX hack. Handling of this differs.
     if (flags & FLAG_RST) != 0 {
         println!("{}: Connection reset", guard);
         guard.set_state(TCPState::Closed);
@@ -823,6 +791,62 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
             println!("{}: Received packet in state: {:?}", guard, guard.state);
         }
     }
+}
+
+fn validate_checksum(packet: &buf::NetBuffer, source_ip: util::IPAddr) -> bool {
+    let dest_ip = if matches!(source_ip, util::IPAddr::V4(_)) {
+        netif::get_ipaddr().0
+    } else {
+        netif::get_ipaddr().1
+    };
+
+    let ph_checksum = util::compute_pseudo_header_checksum(
+        source_ip,
+        dest_ip,
+        packet.len(),
+        ip::PROTO_TCP,
+    );
+
+    let checksum = util::compute_buffer_ones_comp(ph_checksum, &packet) ^ 0xffff;
+    checksum == 0
+}
+
+struct TCPHeaderOptions {
+    max_segment_size: usize,
+}
+
+fn parse_options(header: &[u8]) -> TCPHeaderOptions {
+    let mut options = TCPHeaderOptions {
+        max_segment_size: 0,
+    };
+
+    let mut opt_offset = 0;
+    while opt_offset < header.len() {
+        let option_type = header[opt_offset];
+        if option_type == 0 {
+            break;
+        }
+
+        if option_type == 1 {
+            // No-op
+            opt_offset += 1;
+            continue;
+        }
+
+        let option_length = header[opt_offset + 1] as usize;
+        if option_type == 0 {
+            break;
+        }
+
+        if option_type == 2 {
+            options.max_segment_size = util::get_be16(&header[opt_offset + 2..opt_offset + 4]) as usize;
+        }
+
+        println!("offset {} option {} length {}", opt_offset, option_type, option_length);
+        opt_offset += option_length;
+    }
+
+    options
 }
 
 fn handle_new_connection(
