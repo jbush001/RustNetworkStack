@@ -23,11 +23,10 @@ use crate::ip;
 use crate::netif;
 use crate::timer;
 use crate::util;
-use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, LazyLock};
 
 const EPHEMERAL_PORT_BASE: u16 = 49152;
 const RETRANSMIT_INTERVAL: u32 = 1000; // HACK: this should back off
@@ -127,9 +126,9 @@ impl TCPSocket {
 type SocketKey = (util::IPAddr, u16, u16);
 type PortMap = HashMap<SocketKey, SocketReference>;
 
-lazy_static! {
-    static ref PORT_MAP: Mutex<PortMap> = Mutex::new(HashMap::new());
-}
+static PORT_MAP: LazyLock<Mutex<PortMap>> = LazyLock::new( || {
+    Mutex::new(HashMap::new())
+});
 
 /// Generate a random ephemeral port that doesn't conflict with any open sockets.
 fn find_ephemeral_port(

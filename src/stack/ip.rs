@@ -29,7 +29,8 @@ pub const PROTO_UDP: u8 = 17;
 
 const IPV4_BASE_HEADER_LEN: usize = 20;
 const IPV6_HEADER_LEN: usize = 40;
-static mut NEXT_PACKET_ID: AtomicU16 = AtomicU16::new(0);
+
+static NEXT_PACKET_ID: AtomicU16 = AtomicU16::new(0);
 const DEFAULT_TTL: u8 = 64;
 
 pub fn ip_input(packet: buf::NetBuffer) {
@@ -146,7 +147,7 @@ fn ip_output_v4(mut packet: buf::NetBuffer, protocol: u8, dest_addr: util::IPAdd
 
     util::set_be16(
         &mut header[4..6], // ID
-        unsafe { NEXT_PACKET_ID.fetch_add(1, Ordering::AcqRel) },
+        NEXT_PACKET_ID.fetch_add(1, Ordering::AcqRel),
     );
 
     header[8] = DEFAULT_TTL; // TTL

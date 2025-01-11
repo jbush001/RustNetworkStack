@@ -18,11 +18,10 @@ use crate::buf;
 use crate::ip;
 use crate::netif;
 use crate::util;
-use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Condvar;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, LazyLock};
 
 pub struct UDPSocket {
     receive_queue: VecDeque<(util::IPAddr, u16, buf::NetBuffer)>,
@@ -33,9 +32,9 @@ type SocketReference = Arc<(Mutex<UDPSocket>, Condvar)>;
 type PortMap = HashMap<u16, SocketReference>;
 
 
-lazy_static! {
-    static ref PORT_MAP: Mutex<PortMap> = Mutex::new(HashMap::new());
-}
+static PORT_MAP: LazyLock<Mutex<PortMap>> = LazyLock::new(|| {
+    Mutex::new(HashMap::new())
+});
 
 impl UDPSocket {
     fn new(port: u16) -> UDPSocket {

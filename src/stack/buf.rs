@@ -14,10 +14,9 @@
 // limitations under the License.
 //
 
-use lazy_static::lazy_static;
 use std::cmp;
 use std::ops::Range;
-use std::sync::Mutex;
+use std::sync::{Mutex, LazyLock};
 use crate::util;
 
 //
@@ -86,10 +85,10 @@ struct FragmentPool {
 
 const POOL_GROW_SIZE: usize = 16;
 
-lazy_static! {
-    // This is a global singleton used by everything.
-    static ref FRAGMENT_POOL: Mutex<FragmentPool> = Mutex::new(FragmentPool::new());
-}
+// This is a global singleton used by everything.
+static FRAGMENT_POOL: LazyLock<Mutex<FragmentPool>> = LazyLock::new(|| {
+    Mutex::new(FragmentPool::new())
+});
 
 pub fn buffer_count_to_memory(count: u32) -> u32 {
     count * FRAGMENT_SIZE as u32

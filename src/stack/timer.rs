@@ -14,7 +14,6 @@
 // limitations under the License.
 //
 
-use lazy_static::lazy_static;
 use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -38,6 +37,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 // - Various sorts of priority queues, heaps, etc.
 //
 
+use std::sync::LazyLock;
+
 const TIMER_INTERVAL: Duration = Duration::from_millis(50);
 
 struct Timer {
@@ -46,10 +47,11 @@ struct Timer {
     id: i32,
 }
 
-lazy_static! {
-    static ref PENDING_TIMERS: Mutex<Vec<Timer>> = Mutex::new(Vec::new());
-    static ref NEXT_TIMER_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-}
+static PENDING_TIMERS: LazyLock<Mutex<Vec<Timer>>> = LazyLock::new(|| {
+    Mutex::new(Vec::new())
+});
+
+static NEXT_TIMER_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 
 fn current_time_ms() -> u64 {
     SystemTime::now()
