@@ -72,13 +72,17 @@ struct TCPSocketState {
     state: TCPState,
 
     // Receive
+    // ----------|----------|----------
+    //        RCV.NXT    RCV.NXT
+    //                  +RCV.WND
+    //
+    receive_next_seq: u32, // RCV.NXT
     receive_queue: buf::NetBuffer,
     reassembler: TCPReassembler,
     delayed_ack_timer_id: i32,
     num_delayed_acks: u32,
-    highest_seq_received: u32,
 
-    // Transmit
+    // Send
     // Variable names from RFC 9293, 3.3.1
     //
     // ----------|----------|----------|----------
@@ -90,13 +94,11 @@ struct TCPSocketState {
     send_window: u32,            // SND.WND
     send_last_win_seq: u32,      // SND.WL1
     send_last_win_ack: u32,      // SND.WL2
-
-
+    send_mss: usize,
     retransmit_queue: buf::NetBuffer,
     retransmit_timer_id: i32,
     response_timer_id: i32,
     request_retry_count: u32,
-    transmit_mss: usize,
 
     // Listen
     socket_queue: Vec<SocketReference>,
@@ -242,7 +244,7 @@ pub fn tcp_write(socket_ref: &mut SocketReference, data: &[u8]) -> i32 {
 
     let mut offset = 0;
     while offset < data.len() {
-        let packet_length = std::cmp::min(data.len() - offset, guard.transmit_mss);
+        let packet_length = std::cmp::min(data.len() - offset, guard.send_mss);
         let max_segment = guard.send_unacked.wrapping_add(guard.send_window);
         if util::seq_gt(
             guard.send_next_seq.wrapping_add(packet_length as u32),
@@ -323,7 +325,7 @@ fn retransmit(socket_ref: SocketReference) {
     if !guard.retransmit_queue.is_empty() {
         println!("Retransmitting sequence {}", guard.send_next_seq);
         let mut packet = buf::NetBuffer::new();
-        packet.append_from_buffer(&guard.retransmit_queue, guard.transmit_mss);
+        packet.append_from_buffer(&guard.retransmit_queue, guard.send_mss);
         guard.send_packet(packet, FLAG_ACK | FLAG_PSH);
         let socket_clone = socket_ref.clone();
         guard.retransmit_timer_id = timer::set_timer(RETRANSMIT_INTERVAL, move || {
@@ -359,28 +361,28 @@ fn flags_to_str(flags: u8) -> String {
 
 impl TCPSocketState {
     fn new(remote_ip: util::IPAddr, remote_port: u16, local_port: u16) -> TCPSocketState {
-        let initial_sequence = rand::random::<u32>();
+        let iss = rand::random::<u32>();
         TCPSocketState {
             remote_ip,
             remote_port,
             local_port,
-            send_next_seq: initial_sequence,
             state: TCPState::Closed,
+            receive_next_seq: 0,
             receive_queue: buf::NetBuffer::new(),
             reassembler: TCPReassembler::new(),
             delayed_ack_timer_id: -1,
             num_delayed_acks: 0,
+            send_unacked: 0,
+            send_next_seq: iss,
+            send_window: 0,
+            send_last_win_seq: 0,
+            send_last_win_ack: 0,
+            send_mss: DEFAULT_TCP_MSS,
             retransmit_queue: buf::NetBuffer::new(),
             retransmit_timer_id: -1,
             response_timer_id: -1,
             request_retry_count: 0,
-            highest_seq_received: 0,
-            transmit_mss: DEFAULT_TCP_MSS,
             socket_queue: Vec::new(),
-            send_unacked: initial_sequence,
-            send_window: 0,
-            send_last_win_seq: 0,
-            send_last_win_ack: 0,
         }
     }
 
@@ -394,7 +396,7 @@ impl TCPSocketState {
             + if matches!(
                 self.state,
                 TCPState::FinWait1 | TCPState::FinWait2 | TCPState::Closing | TCPState::CloseWait
-            ) && self.highest_seq_received == self.reassembler.get_next_expect()
+            ) && self.receive_next_seq == self.reassembler.get_next_expect()
             {
                 1
             } else {
@@ -604,7 +606,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
     let (mut guard, cond) = (*socket_ref).lock();
 
     if options.max_segment_size != 0 {
-        guard.transmit_mss = options.max_segment_size;
+        guard.send_mss = options.max_segment_size;
         println!("Set max segment size {}", options.max_segment_size);
     }
 
@@ -625,8 +627,8 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
 
     if !packet.is_empty() {
         // Handle received data
-        guard.highest_seq_received = util::wrapping_max(
-            guard.highest_seq_received,
+        guard.receive_next_seq = util::wrapping_max(
+            guard.receive_next_seq,
             seq_num.wrapping_add(packet.len() as u32),
         );
         let got = guard.reassembler.add_packet(packet, seq_num);
@@ -724,7 +726,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
         TCPState::SynSent => {
             if (flags & FLAG_ACK) != 0 {
                 guard.set_state(TCPState::Established);
-                guard.highest_seq_received = seq_num.wrapping_add(1);
+                guard.receive_next_seq = seq_num.wrapping_add(1);
                 guard.reassembler.set_next_expect(seq_num.wrapping_add(1));
 
                 guard.send_window = remote_window_size as u32;
@@ -893,8 +895,8 @@ fn handle_new_connection(
     guard.remote_ip = source_ip;
     guard.remote_port = source_port;
     guard.set_state(TCPState::SynReceived);
-    guard.transmit_mss = max_segment_size;
-    guard.highest_seq_received = seq_num.wrapping_add(1);
+    guard.send_mss = max_segment_size;
+    guard.receive_next_seq = seq_num.wrapping_add(1);
     guard.reassembler.set_next_expect(seq_num.wrapping_add(1));
 
     guard.send_packet(buf::NetBuffer::new(), FLAG_SYN | FLAG_ACK);
