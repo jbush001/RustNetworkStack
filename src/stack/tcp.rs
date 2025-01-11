@@ -682,10 +682,24 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
     if (flags & FLAG_ACK) != 0 && guard.is_established() {
         // RFC 9293, 3.10.7.4 [SEGMENT ARRIVES] Other States
         // Fifth, check the ACK field
-
-        if util::seq_lt(guard.send_unacked, ack_num)
+       if util::seq_lt(guard.send_unacked, ack_num)
             && util::seq_le(ack_num, guard.send_next_seq)
         {
+            let trim = ack_num.wrapping_sub(guard.send_unacked) as usize;
+            println!("{}: trim {} retransmit_queue size {}", guard, trim, guard.retransmit_queue.len());
+            guard.retransmit_queue.trim_head(trim);
+            println!(
+                "{}: Trimming {} acked bytes from retransmit queue, size is now {}",
+                guard,
+                trim,
+                guard.retransmit_queue.len()
+            );
+
+            if guard.retransmit_queue.is_empty() {
+                timer::cancel_timer(guard.retransmit_timer_id);
+                guard.retransmit_timer_id = -1;
+            }
+
             guard.send_unacked = ack_num;
         }
 
@@ -716,7 +730,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
                 guard.send_window = remote_window_size as u32;
                 guard.send_last_win_seq = seq_num;
                 guard.send_last_win_ack = ack_num;
-
+                guard.send_unacked = ack_num;
 
                 // The SYN consumes a sequence number.
                 guard.send_next_seq = guard.send_next_seq.wrapping_add(1);
@@ -736,7 +750,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
 
                 // The SYN consumes a sequence number.
                 guard.send_next_seq = guard.send_next_seq.wrapping_add(1);
-
+                guard.send_unacked = ack_num;
             }
         }
 
@@ -746,27 +760,6 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
 
                 // Ack will be sent below. FIN packets can contain data.
                 cond.notify_all();
-            }
-
-            if (flags & FLAG_ACK) != 0 {
-                let oldest_unacked = guard
-                    .send_next_seq
-                    .wrapping_sub(guard.retransmit_queue.len() as u32);
-                if util::seq_gt(ack_num, oldest_unacked) {
-                    let trim = ack_num.wrapping_sub(oldest_unacked) as usize;
-                    guard.retransmit_queue.trim_head(trim);
-                    println!(
-                        "{}: Trimming {} acked bytes from retransmit queue, size is now {}",
-                        guard,
-                        trim,
-                        guard.retransmit_queue.len()
-                    );
-
-                    if guard.retransmit_queue.is_empty() {
-                        timer::cancel_timer(guard.retransmit_timer_id);
-                        guard.retransmit_timer_id = -1;
-                    }
-                }
             }
         }
 
