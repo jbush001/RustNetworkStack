@@ -157,6 +157,18 @@ pub fn seq_gt(val1: u32, val2: u32) -> bool {
     diff < 0x80000000 && diff != 0
 }
 
+pub fn seq_lt(val1: u32, val2: u32) -> bool {
+    seq_gt(val2, val1)
+}
+
+pub fn seq_le(val1: u32, val2: u32) -> bool {
+    !seq_gt(val1, val2)
+}
+
+pub fn seq_ge(val1: u32, val2: u32) -> bool {
+    !seq_gt(val2, val1)
+}
+
 pub fn wrapping_max(val1: u32, val2: u32) -> u32 {
     if seq_gt(val1, val2) { val1 } else { val2 }
 }
@@ -374,12 +386,38 @@ mod tests {
     }
 
     #[test]
-    fn test_seq_gt() {
+    fn test_seq_compare() {
         assert_eq!(super::seq_gt(0x00000001, 0x00000000), true);
         assert_eq!(super::seq_gt(0x00000000, 0x00000001), false);
+        assert_eq!(super::seq_gt(0x00001234, 0x00001234), false);
         assert_eq!(super::seq_gt(0x7fffffff, 0x80000000), false);
         assert_eq!(super::seq_gt(0x80000000, 0x7fffffff), true);
-        assert_eq!(super::seq_gt(21, 21), false);
+        assert_eq!(super::seq_gt(0xffffffff, 0x00000000), false);
+        assert_eq!(super::seq_gt(0x00000000, 0xffffffff), true);
+
+        assert_eq!(super::seq_ge(0x00000001, 0x00000000), true);
+        assert_eq!(super::seq_ge(0x00000000, 0x00000001), false);
+        assert_eq!(super::seq_ge(0x00001234, 0x00001234), true);
+        assert_eq!(super::seq_ge(0x7fffffff, 0x80000000), false);
+        assert_eq!(super::seq_ge(0x80000000, 0x7fffffff), true);
+        assert_eq!(super::seq_ge(0xffffffff, 0x00000000), false);
+        assert_eq!(super::seq_ge(0x00000000, 0xffffffff), true);
+
+        assert_eq!(super::seq_lt(0x00000001, 0x00000000), false);
+        assert_eq!(super::seq_lt(0x00000000, 0x00000001), true);
+        assert_eq!(super::seq_lt(0x00001234, 0x00001234), false);
+        assert_eq!(super::seq_lt(0x7fffffff, 0x80000000), true);
+        assert_eq!(super::seq_lt(0x80000000, 0x7fffffff), false);
+        assert_eq!(super::seq_lt(0xffffffff, 0x00000000), true);
+        assert_eq!(super::seq_lt(0x00000000, 0xffffffff), false);
+
+        assert_eq!(super::seq_le(0x00000001, 0x00000000), false);
+        assert_eq!(super::seq_le(0x00000000, 0x00000001), true);
+        assert_eq!(super::seq_le(0x00001234, 0x00001234), true);
+        assert_eq!(super::seq_le(0x7fffffff, 0x80000000), true);
+        assert_eq!(super::seq_le(0x80000000, 0x7fffffff), false);
+        assert_eq!(super::seq_le(0xffffffff, 0x00000000), true);
+        assert_eq!(super::seq_le(0x00000000, 0xffffffff), false);
     }
 
     #[test]

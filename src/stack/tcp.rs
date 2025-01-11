@@ -14,9 +14,7 @@
 // limitations under the License.
 //
 
-
 // Transmission Control Protocol, as described in RFC 9293
-
 
 use crate::buf;
 use crate::ip;
@@ -81,9 +79,20 @@ struct TCPSocketState {
     highest_seq_received: u32,
 
     // Transmit
-    next_transmit_seq: u32,
+    // Variable names from RFC 9293, 3.3.1
+    //
+    // ----------|----------|----------|----------
+    //        SND.UNA    SND.NXT    SND.UNA
+    //                             +SND.WND
+    //
+    send_unacked: u32,           // SND.UNA
+    send_next_seq: u32,          // SND.NXT
+    send_window: u32,            // SND.WND
+    send_last_win_seq: u32,      // SND.WL1
+    send_last_win_ack: u32,      // SND.WL2
+
+
     retransmit_queue: buf::NetBuffer,
-    transmit_window_max: u32, // Highest sequence we can transmit
     retransmit_timer_id: i32,
     response_timer_id: i32,
     request_retry_count: u32,
@@ -234,14 +243,15 @@ pub fn tcp_write(socket_ref: &mut SocketReference, data: &[u8]) -> i32 {
     let mut offset = 0;
     while offset < data.len() {
         let packet_length = std::cmp::min(data.len() - offset, guard.transmit_mss);
+        let max_segment = guard.send_unacked.wrapping_add(guard.send_window);
         if util::seq_gt(
-            guard.next_transmit_seq.wrapping_add(packet_length as u32),
-            guard.transmit_window_max,
+            guard.send_next_seq.wrapping_add(packet_length as u32),
+            max_segment,
         ) {
             // We are out of transmit window. Wait for acks to come in.
             println!(
                 "{}: Waiting for transmit window to open, next_seq {} window_max {}",
-                guard, guard.next_transmit_seq, guard.transmit_window_max
+                guard, guard.send_next_seq, max_segment
             );
             guard = cond.wait(guard).unwrap();
             println!("{}: Transmit window opened", guard);
@@ -256,7 +266,7 @@ pub fn tcp_write(socket_ref: &mut SocketReference, data: &[u8]) -> i32 {
         let packet_slice = &data[offset..offset + packet_length];
         packet.append_from_slice(packet_slice);
         guard.send_packet(packet, FLAG_ACK | FLAG_PSH);
-        guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(packet_length as u32);
+        guard.send_next_seq = guard.send_next_seq.wrapping_add(packet_length as u32);
         guard.retransmit_queue.append_from_slice(packet_slice);
         offset += packet_length;
 
@@ -311,7 +321,7 @@ fn retransmit(socket_ref: SocketReference) {
     util::STATS.packets_retransmitted.inc();
 
     if !guard.retransmit_queue.is_empty() {
-        println!("Retransmitting sequence {}", guard.next_transmit_seq);
+        println!("Retransmitting sequence {}", guard.send_next_seq);
         let mut packet = buf::NetBuffer::new();
         packet.append_from_buffer(&guard.retransmit_queue, guard.transmit_mss);
         guard.send_packet(packet, FLAG_ACK | FLAG_PSH);
@@ -349,12 +359,12 @@ fn flags_to_str(flags: u8) -> String {
 
 impl TCPSocketState {
     fn new(remote_ip: util::IPAddr, remote_port: u16, local_port: u16) -> TCPSocketState {
+        let initial_sequence = rand::random::<u32>();
         TCPSocketState {
             remote_ip,
             remote_port,
             local_port,
-            next_transmit_seq: rand::random::<u32>(),
-            transmit_window_max: 0,
+            send_next_seq: initial_sequence,
             state: TCPState::Closed,
             receive_queue: buf::NetBuffer::new(),
             reassembler: TCPReassembler::new(),
@@ -367,6 +377,10 @@ impl TCPSocketState {
             highest_seq_received: 0,
             transmit_mss: DEFAULT_TCP_MSS,
             socket_queue: Vec::new(),
+            send_unacked: initial_sequence,
+            send_window: 0,
+            send_last_win_seq: 0,
+            send_last_win_ack: 0,
         }
     }
 
@@ -391,7 +405,7 @@ impl TCPSocketState {
             "{}: send_packet: flags {} seq {} ack {} window {} (length {})",
             self,
             flags_to_str(flags),
-            self.next_transmit_seq,
+            self.send_next_seq,
             ack_seq,
             receive_window,
             packet.len(),
@@ -407,7 +421,7 @@ impl TCPSocketState {
             source_port: self.local_port,
             dest_ip: self.remote_ip,
             dest_port: self.remote_port,
-            seq_num: self.next_transmit_seq,
+            seq_num: self.send_next_seq,
             ack_num: ack_seq,
             flags,
             window: receive_window,
@@ -666,10 +680,29 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
     }
 
     if (flags & FLAG_ACK) != 0 && guard.is_established() {
-        let new_transmit_window = ack_num.wrapping_add(remote_window_size as u32);
-        if util::seq_gt(new_transmit_window, guard.transmit_window_max) {
-            guard.transmit_window_max = new_transmit_window;
-            cond.notify_all(); // Wake up writers waiting for window to open.
+        // RFC 9293, 3.10.7.4 [SEGMENT ARRIVES] Other States
+        // Fifth, check the ACK field
+
+        if util::seq_lt(guard.send_unacked, ack_num)
+            && util::seq_le(ack_num, guard.send_next_seq)
+        {
+            guard.send_unacked = ack_num;
+        }
+
+        // We record the acknowledgement and sequence number of
+        // the last window update in the send_last_win_seq and
+        // send_last_win_ack fields to prevent using old segments
+        // to update the window.
+        if util::seq_le(guard.send_unacked, ack_num)
+            && util::seq_le(ack_num, guard.send_next_seq)
+            && (util::seq_lt(guard.send_last_win_seq, seq_num)
+            || (guard.send_last_win_seq == seq_num
+                && util::seq_le(guard.send_last_win_ack, ack_num)))
+        {
+            guard.send_window = remote_window_size as u32;
+            guard.send_last_win_seq = seq_num;
+            guard.send_last_win_ack = ack_num;
+            cond.notify_all();
         }
     }
 
@@ -679,10 +712,14 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
                 guard.set_state(TCPState::Established);
                 guard.highest_seq_received = seq_num.wrapping_add(1);
                 guard.reassembler.set_next_expect(seq_num.wrapping_add(1));
-                guard.transmit_window_max = ack_num.wrapping_add(remote_window_size as u32);
+
+                guard.send_window = remote_window_size as u32;
+                guard.send_last_win_seq = seq_num;
+                guard.send_last_win_ack = ack_num;
+
 
                 // The SYN consumes a sequence number.
-                guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(1);
+                guard.send_next_seq = guard.send_next_seq.wrapping_add(1);
 
                 // Send ack to complete handshake
                 guard.send_packet(buf::NetBuffer::new(), FLAG_ACK);
@@ -698,7 +735,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
                 guard.set_state(TCPState::Established);
 
                 // The SYN consumes a sequence number.
-                guard.next_transmit_seq = guard.next_transmit_seq.wrapping_add(1);
+                guard.send_next_seq = guard.send_next_seq.wrapping_add(1);
 
             }
         }
@@ -711,12 +748,9 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
                 cond.notify_all();
             }
 
-            // XXX this also needs to happen during shutdown when we may not be
-            // in the established state. But we need to account for FIN consuming
-            // a sequence number.
             if (flags & FLAG_ACK) != 0 {
                 let oldest_unacked = guard
-                    .next_transmit_seq
+                    .send_next_seq
                     .wrapping_sub(guard.retransmit_queue.len() as u32);
                 if util::seq_gt(ack_num, oldest_unacked) {
                     let trim = ack_num.wrapping_sub(oldest_unacked) as usize;
@@ -745,7 +779,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
         TCPState::FinWait1 => {
             if (flags & FLAG_ACK != 0)
                 && (flags & FLAG_FIN != 0)
-                && ack_num == guard.next_transmit_seq.wrapping_add(1)
+                && ack_num == guard.send_next_seq.wrapping_add(1)
             {
                 guard.set_state(TCPState::TimeWait);
                 let socket_clone = socket_ref.clone();
@@ -756,7 +790,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
                 guard.set_state(TCPState::Closing);
                 guard.send_packet(buf::NetBuffer::new(), FLAG_ACK);
                 set_response_timer(&mut guard, socket_ref.clone());
-            } else if (flags & FLAG_ACK) != 0 && ack_num == guard.next_transmit_seq.wrapping_add(1)
+            } else if (flags & FLAG_ACK) != 0 && ack_num == guard.send_next_seq.wrapping_add(1)
             {
                 guard.set_state(TCPState::FinWait2);
             }
@@ -866,12 +900,15 @@ fn handle_new_connection(
     guard.remote_ip = source_ip;
     guard.remote_port = source_port;
     guard.set_state(TCPState::SynReceived);
-    guard.transmit_window_max = ack_num.wrapping_add(remote_window_size as u32);
     guard.transmit_mss = max_segment_size;
     guard.highest_seq_received = seq_num.wrapping_add(1);
     guard.reassembler.set_next_expect(seq_num.wrapping_add(1));
 
     guard.send_packet(buf::NetBuffer::new(), FLAG_SYN | FLAG_ACK);
+    guard.send_unacked = seq_num;
+    guard.send_last_win_ack = ack_num;
+    guard.send_last_win_seq = seq_num;
+    guard.send_window = remote_window_size as u32;
     set_response_timer(&mut guard, new_socket_ref.clone());
     drop(guard); // Unlock to avoid deadlock
 
