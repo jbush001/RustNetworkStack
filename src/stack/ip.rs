@@ -60,7 +60,7 @@ pub fn ip_input(packet: buf::NetBuffer) {
 // 20 |                    Options                    |    Padding    |
 //    +-----------------------------------------------+---------------+
 
-pub fn ip_input_v4(mut packet: buf::NetBuffer) {
+fn ip_input_v4(mut packet: buf::NetBuffer) {
     // A common way to decode packet headers is to cast the raw byte
     // array to a packed structure. This is a bit more challenging in
     // Rust (it's sketchy in any language, but Rust is more of a stickler).

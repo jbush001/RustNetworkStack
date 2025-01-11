@@ -93,7 +93,7 @@ struct TCPSocketState {
     socket_queue: Vec<SocketReference>,
 }
 
-pub struct TCPReassembler {
+struct TCPReassembler {
     next_sequence: u32,
     out_of_order: Vec<(u32, buf::NetBuffer)>,
 }
@@ -445,7 +445,7 @@ impl Display for TCPSocketState {
 }
 
 impl TCPReassembler {
-    fn new() -> TCPReassembler {
+    const fn new() -> TCPReassembler {
         TCPReassembler {
             next_sequence: 0,
             out_of_order: Vec::new(),
@@ -804,7 +804,7 @@ fn validate_checksum(packet: &buf::NetBuffer, source_ip: util::IPAddr) -> bool {
         ip::PROTO_TCP,
     );
 
-    let checksum = util::compute_buffer_ones_comp(ph_checksum, &packet) ^ 0xffff;
+    let checksum = util::compute_buffer_ones_comp(ph_checksum, packet) ^ 0xffff;
     checksum == 0
 }
 

@@ -21,16 +21,18 @@ use crate::util;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Condvar;
-use std::sync::{Arc, Mutex, LazyLock};
+use std::sync::{Arc, Mutex, LazyLock, MutexGuard};
 
-pub struct UDPSocket {
+pub type SocketReference = Arc<UDPSocket>;
+
+pub struct UDPSocket (Mutex<UDPSocketState>, Condvar);
+
+pub struct UDPSocketState {
     receive_queue: VecDeque<(util::IPAddr, u16, buf::NetBuffer)>,
     port: u16,
 }
 
-type SocketReference = Arc<(Mutex<UDPSocket>, Condvar)>;
 type PortMap = HashMap<u16, SocketReference>;
-
 
 static PORT_MAP: LazyLock<Mutex<PortMap>> = LazyLock::new(|| {
     Mutex::new(HashMap::new())
@@ -38,7 +40,17 @@ static PORT_MAP: LazyLock<Mutex<PortMap>> = LazyLock::new(|| {
 
 impl UDPSocket {
     fn new(port: u16) -> UDPSocket {
-        UDPSocket {
+        UDPSocket(Mutex::new(UDPSocketState::new(port)), Condvar::new())
+    }
+
+    fn lock(&self) -> (MutexGuard<UDPSocketState>, &Condvar) {
+        (self.0.lock().unwrap(), &self.1)
+    }
+}
+
+impl UDPSocketState {
+    fn new(port: u16) -> UDPSocketState {
+        UDPSocketState {
             receive_queue: VecDeque::new(),
             port,
         }
@@ -51,21 +63,19 @@ pub fn udp_open(port: u16) -> Result<SocketReference, &'static str> {
         return Err("Port already in use");
     }
 
-    let socket = UDPSocket::new(port);
-    let socket = Arc::new((Mutex::new(socket), Condvar::new()));
-    port_map_guard.insert(port, socket.clone());
+    let socket_ref = Arc::new(UDPSocket::new(port));
+    port_map_guard.insert(port, socket_ref.clone());
 
-    Ok(socket)
+    Ok(socket_ref)
 }
 
 pub fn udp_recv(
-    socket: &mut SocketReference,
+    socket_ref: &mut SocketReference,
     data: &mut [u8],
     out_addr: &mut util::IPAddr,
     out_port: &mut u16,
 ) -> i32 {
-    let (mutex, cond) = &**socket;
-    let mut guard = mutex.lock().unwrap();
+    let (mut guard, cond) = (*socket_ref).lock();
 
     loop {
         let entry = guard.receive_queue.pop_front();
@@ -85,13 +95,12 @@ pub fn udp_recv(
 }
 
 pub fn udp_send(
-    socket: &mut SocketReference,
+    socket_ref: &mut SocketReference,
     dest_addr: util::IPAddr,
     dest_port: u16,
     data: &[u8],
 ) -> Result<(), &'static str> {
-    let (mutex, _cond) = &**socket;
-    let guard = mutex.lock().unwrap();
+    let (guard, _) = (*socket_ref).lock();
 
     let mut packet = buf::NetBuffer::new();
     packet.append_from_slice(data);
@@ -125,12 +134,8 @@ pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPAddr) {
     let socket = pm_entry
         .expect("just checked if pm_entry is none above")
         .clone();
-    let (mutex, cond) = &*socket;
-    let mut guard = mutex.lock().unwrap();
-
-    guard
-        .receive_queue
-        .push_back((source_addr, source_port, packet));
+    let (mut guard, cond) = (*socket).lock();
+    guard.receive_queue.push_back((source_addr, source_port, packet));
 
     cond.notify_all();
 }

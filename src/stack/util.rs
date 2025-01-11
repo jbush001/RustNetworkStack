@@ -55,6 +55,12 @@ impl IPAddr {
     }
 }
 
+impl Default for IPAddr {
+    fn default() -> Self {
+        IPAddr::new()
+    }
+}
+
 impl std::fmt::Display for IPAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         match self {
@@ -201,6 +207,12 @@ impl PerfCounter {
 
     pub fn get(&self) -> u32 {
         self.0.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for PerfCounter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

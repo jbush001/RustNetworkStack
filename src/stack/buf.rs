@@ -97,7 +97,7 @@ pub fn buffer_count_to_memory(count: u32) -> u32 {
 /// Note that this instance is protected by an external mutex, so none of these
 /// functions are reentrant.
 impl FragmentPool {
-    fn new() -> FragmentPool {
+    const fn new() -> FragmentPool {
         FragmentPool {
             free_list: None,
         }
@@ -151,7 +151,7 @@ impl FragmentPool {
 }
 
 impl BufferFragment {
-    pub fn new() -> BufferFragment {
+    const fn new() -> BufferFragment {
         BufferFragment {
             data: [0; FRAGMENT_SIZE],
             range: 0..0,
@@ -159,7 +159,7 @@ impl BufferFragment {
         }
     }
 
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.range.len()
     }
 }
@@ -187,8 +187,14 @@ impl Drop for NetBuffer {
     }
 }
 
+impl Default for NetBuffer {
+    fn default() -> NetBuffer {
+        NetBuffer::new()
+    }
+}
+
 impl NetBuffer {
-    pub fn new() -> NetBuffer {
+    pub const fn new() -> NetBuffer {
         NetBuffer {
             fragments: None,
             length: 0,
