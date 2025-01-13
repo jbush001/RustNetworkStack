@@ -5,23 +5,22 @@ been wanting to dig into Rust more deeply with a non-trival project
 for a while, and this one seemed interesting. I have written a network
 stack before many years ago but that was in C.
 
-I've also recently gotten access to Github Copilot and have been using
-it heavily on this, which has been an interesting experience. It seems
-to struggle with the reasoning about the borrow checker as much as humans,
-often generating obviously incorrect code (and, unfortunately, sometimes
-subtly incorrect), but it is also surprisingly good at times. I'm dubious
-it will replace programmers in the short term as some have predicted, but
-I'm intrigued by it as a teaching tool.
+I've also recently gotten access to Github Copilot and have been using it
+quite a bit on this, which has been an interesting experience. It seems to
+struggle with the reasoning about the borrow checker as much as humans, often
+generating obviously incorrect code (and, unfortunately, sometimes subtly
+incorrect). Rust's ownership and borrowing semantics require building an
+internal mental model and reasoning about it, and it's still unclear if
+current LLMs are capable of this. Also, I'd guess these models probably have
+much less Rust in their training data. I'm dubious LLMs will replace
+programmers in the short term as some have predicted.
 
-This uses the TUN/TAP driver on Linux to provide a network interface. This
-driver presents a virtual network interface (akin to plugging in an Ethernet
-card) to the host operating system. This program then emulates a remote
-host on that virtual network. This allows this stack to communicate with
-programs running on the host.
-
-IP bridging (<https://developers.redhat.com/articles/2022/04/06/introduction-linux-bridging-commands-and-features>),
-should also allow this stack to communicate with other machines on the
-Internet, although I haven't done that.
+This uses the TUN driver on Linux to provide acccess to a network
+interface for testing <https://docs.kernel.org/networking/tuntap.html>.
+This driver presents a virtual network interface (looking roughly like an
+Ethernet card) to the host operating system. This program then emulates a
+remote host on that virtual network. This allows this stack to communicate
+with programs running on the host.
 
     +----------------------+              +--------------------+
     |       netstack       |              |  Host test program |
@@ -39,6 +38,9 @@ Internet, although I haven't done that.
     |                                                                  |
     +------------------------------------------------------------------+
 
+IP bridging (<https://developers.redhat.com/articles/2022/04/06/introduction-linux-bridging-commands-and-features>),
+should also allow this stack to communicate with other machines on the
+Internet, although I haven't done that.
 
 ## Setup
 
@@ -64,7 +66,7 @@ Run benchmark:
 
 The network stack must be run with root privileges, as the TUN device is
 not accessible to regular users. It's probably possible to make configuration
-changes to avoid that, but I haven't bothered.
+changes to avoid that, but I haven't done that.
 
 You can also run tcpdump in another window to monitor traffic (this has to be
 invoked after netstack is running, otherwise the interface will not exist).
@@ -83,7 +85,6 @@ Now try pinging:
     64 bytes from 10.0.0.2: icmp_seq=2 ttl=64 time=1.40 ms
     64 bytes from 10.0.0.2: icmp_seq=3 ttl=64 time=1.01 ms
     64 bytes from 10.0.0.2: icmp_seq=4 ttl=64 time=2.10 ms
-
 
 Or IPv6
 

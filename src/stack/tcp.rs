@@ -26,7 +26,7 @@ use crate::util;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, LazyLock};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard};
 
 const EPHEMERAL_PORT_BASE: u16 = 49152;
 const RETRANSMIT_INTERVAL: u32 = 1000; // HACK: this should back off
@@ -65,7 +65,7 @@ pub type SocketReference = Arc<TCPSocket>;
 // The condition in the socket reference is used to signal to clients of the
 // API that are waiting, for example, for a reader waiting for new data or
 // on open.
-pub struct TCPSocket (Mutex<TCPSocketState>, Condvar);
+pub struct TCPSocket(Mutex<TCPSocketState>, Condvar);
 
 struct TCPSocketState {
     remote_ip: util::IPAddr,
@@ -91,11 +91,11 @@ struct TCPSocketState {
     //        SND.UNA    SND.NXT    SND.UNA
     //                             +SND.WND
     //
-    send_unacked: u32,           // SND.UNA
-    send_next_seq: u32,          // SND.NXT
-    send_window: u32,            // SND.WND
-    send_last_win_seq: u32,      // SND.WL1
-    send_last_win_ack: u32,      // SND.WL2
+    send_unacked: u32,      // SND.UNA
+    send_next_seq: u32,     // SND.NXT
+    send_window: u32,       // SND.WND
+    send_last_win_seq: u32, // SND.WL1
+    send_last_win_ack: u32, // SND.WL2
     send_mss: usize,
     retransmit_queue: buf::NetBuffer,
     retransmit_timer_id: i32,
@@ -139,9 +139,7 @@ impl TCPSocket {
 type SocketKey = (util::IPAddr, u16, u16);
 type PortMap = HashMap<SocketKey, SocketReference>;
 
-static PORT_MAP: LazyLock<Mutex<PortMap>> = LazyLock::new( || {
-    Mutex::new(HashMap::new())
-});
+static PORT_MAP: LazyLock<Mutex<PortMap>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Generate a random ephemeral port that doesn't conflict with any open sockets.
 fn find_ephemeral_port(
@@ -318,7 +316,7 @@ pub fn tcp_listen(port: u16) -> Result<SocketReference, &'static str> {
 }
 
 /// Wait for an incoming connection on a listening socket, then return a new socket.
-pub fn tcp_accept(socket_ref: &mut SocketReference) -> Result<SocketReference, &'static str>{
+pub fn tcp_accept(socket_ref: &mut SocketReference) -> Result<SocketReference, &'static str> {
     let (mut guard, cond) = (*socket_ref).lock();
 
     while guard.socket_queue.is_empty() {
@@ -457,7 +455,7 @@ impl TCPSocketState {
         self.request_retry_count = 0;
     }
 
-    fn is_established(&self) -> bool  {
+    fn is_established(&self) -> bool {
         !matches!(
             self.state,
             TCPState::Closed | TCPState::SynSent | TCPState::TimeWait
@@ -609,7 +607,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
             seq_num,
             ack_num,
             remote_window_size,
-            options.max_segment_size
+            options.max_segment_size,
         );
 
         port_map_guard.insert((source_ip, source_port, dest_port), new_socket);
@@ -700,11 +698,14 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
     if (flags & FLAG_ACK) != 0 && guard.is_established() {
         // RFC 9293, 3.10.7.4 [SEGMENT ARRIVES] Other States
         // Fifth, check the ACK field
-       if util::seq_lt(guard.send_unacked, ack_num)
-            && util::seq_le(ack_num, guard.send_next_seq)
-        {
+        if util::seq_lt(guard.send_unacked, ack_num) && util::seq_le(ack_num, guard.send_next_seq) {
             let trim = ack_num.wrapping_sub(guard.send_unacked) as usize;
-            println!("{}: trim {} retransmit_queue size {}", guard, trim, guard.retransmit_queue.len());
+            println!(
+                "{}: trim {} retransmit_queue size {}",
+                guard,
+                trim,
+                guard.retransmit_queue.len()
+            );
             guard.retransmit_queue.trim_head(trim);
             println!(
                 "{}: Trimming {} acked bytes from retransmit queue, size is now {}",
@@ -728,8 +729,8 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
         if util::seq_le(guard.send_unacked, ack_num)
             && util::seq_le(ack_num, guard.send_next_seq)
             && (util::seq_lt(guard.send_last_win_seq, seq_num)
-            || (guard.send_last_win_seq == seq_num
-                && util::seq_le(guard.send_last_win_ack, ack_num)))
+                || (guard.send_last_win_seq == seq_num
+                    && util::seq_le(guard.send_last_win_ack, ack_num)))
         {
             guard.send_window = remote_window_size as u32;
             guard.send_last_win_seq = seq_num;
@@ -801,8 +802,7 @@ pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
                 guard.set_state(TCPState::Closing);
                 guard.send_packet(buf::NetBuffer::new(), FLAG_ACK);
                 set_response_timer(&mut guard, socket_ref.clone());
-            } else if (flags & FLAG_ACK) != 0 && ack_num == guard.send_next_seq.wrapping_add(1)
-            {
+            } else if (flags & FLAG_ACK) != 0 && ack_num == guard.send_next_seq.wrapping_add(1) {
                 guard.set_state(TCPState::FinWait2);
             }
         }
@@ -842,12 +842,8 @@ fn validate_checksum(packet: &buf::NetBuffer, source_ip: util::IPAddr) -> bool {
         netif::get_ipaddr().1
     };
 
-    let ph_checksum = util::compute_pseudo_header_checksum(
-        source_ip,
-        dest_ip,
-        packet.len(),
-        ip::PROTO_TCP,
-    );
+    let ph_checksum =
+        util::compute_pseudo_header_checksum(source_ip, dest_ip, packet.len(), ip::PROTO_TCP);
 
     let checksum = util::compute_buffer_ones_comp(ph_checksum, packet) ^ 0xffff;
     checksum == 0
@@ -881,10 +877,14 @@ fn parse_options(header: &[u8]) -> TCPHeaderOptions {
         }
 
         if option_type == 2 {
-            options.max_segment_size = util::get_be16(&header[opt_offset + 2..opt_offset + 4]) as usize;
+            options.max_segment_size =
+                util::get_be16(&header[opt_offset + 2..opt_offset + 4]) as usize;
         }
 
-        println!("offset {} option {} length {}", opt_offset, option_type, option_length);
+        println!(
+            "offset {} option {} length {}",
+            opt_offset, option_type, option_length
+        );
         opt_offset += option_length;
     }
 

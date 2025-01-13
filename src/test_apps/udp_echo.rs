@@ -53,4 +53,3 @@ fn main() {
         util::print_metrics();
     }
 }
-

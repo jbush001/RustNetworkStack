@@ -14,11 +14,11 @@
 // limitations under the License.
 //
 
+use netstack::{init_netstack, tcp, util};
+use std::env;
 use std::io::Read;
 use std::thread::sleep;
 use std::time::Duration;
-use netstack::{init_netstack, tcp, util};
-use std::env;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

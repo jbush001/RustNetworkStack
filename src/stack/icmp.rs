@@ -21,8 +21,8 @@
 
 use crate::buf;
 use crate::ip;
-use crate::util;
 use crate::netif;
+use crate::util;
 
 // The header has the same layout for V4 and V6, but the type codes are
 // different.

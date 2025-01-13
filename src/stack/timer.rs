@@ -47,9 +47,7 @@ struct Timer {
     id: i32,
 }
 
-static PENDING_TIMERS: LazyLock<Mutex<Vec<Timer>>> = LazyLock::new(|| {
-    Mutex::new(Vec::new())
-});
+static PENDING_TIMERS: LazyLock<Mutex<Vec<Timer>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
 static NEXT_TIMER_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 

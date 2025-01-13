@@ -23,11 +23,11 @@ use crate::util;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Condvar;
-use std::sync::{Arc, Mutex, LazyLock, MutexGuard};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 pub type SocketReference = Arc<UDPSocket>;
 
-pub struct UDPSocket (Mutex<UDPSocketState>, Condvar);
+pub struct UDPSocket(Mutex<UDPSocketState>, Condvar);
 
 pub struct UDPSocketState {
     receive_queue: VecDeque<(util::IPAddr, u16, buf::NetBuffer)>,
@@ -36,9 +36,7 @@ pub struct UDPSocketState {
 
 type PortMap = HashMap<u16, SocketReference>;
 
-static PORT_MAP: LazyLock<Mutex<PortMap>> = LazyLock::new(|| {
-    Mutex::new(HashMap::new())
-});
+static PORT_MAP: LazyLock<Mutex<PortMap>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 impl UDPSocket {
     fn new(port: u16) -> UDPSocket {
@@ -142,17 +140,14 @@ pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPAddr) {
         .expect("just checked if pm_entry is none above")
         .clone();
     let (mut guard, cond) = (*socket).lock();
-    guard.receive_queue.push_back((source_addr, source_port, packet));
+    guard
+        .receive_queue
+        .push_back((source_addr, source_port, packet));
 
     cond.notify_all();
 }
 
-fn udp_output(
-    mut packet: buf::NetBuffer,
-    dest_ip: util::IPAddr,
-    source_port: u16,
-    dest_port: u16,
-) {
+fn udp_output(mut packet: buf::NetBuffer, dest_ip: util::IPAddr, source_port: u16, dest_port: u16) {
     packet.alloc_header(UDP_HEADER_LEN);
     let length = packet.len() as u16;
     let header = packet.header_mut();
@@ -166,7 +161,6 @@ fn udp_output(
         } else {
             netif::get_ipaddr().1
         },
-
         dest_ip,
         length as usize,
         ip::PROTO_UDP,

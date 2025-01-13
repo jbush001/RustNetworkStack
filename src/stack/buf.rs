@@ -14,10 +14,10 @@
 // limitations under the License.
 //
 
+use crate::util;
 use std::cmp;
 use std::ops::Range;
-use std::sync::{Mutex, LazyLock};
-use crate::util;
+use std::sync::{LazyLock, Mutex};
 
 //
 // This module implements an efficient, flexible container for unstructured
@@ -71,7 +71,7 @@ struct BufferFragment {
     // parts (since most other building slice functions use usize)
     // I tried using smaller storage sizes for these and it had no
     // measurable performance impact.
-    next: FragPointer, // Next fragment in linked list.
+    next: FragPointer,   // Next fragment in linked list.
     range: Range<usize>, // Start and end of valid data in this fragment.
     data: [u8; FRAGMENT_SIZE],
 }
@@ -91,9 +91,8 @@ struct FragmentPool {
 const POOL_GROW_SIZE: usize = 16;
 
 // This is a global singleton used by everything.
-static FRAGMENT_POOL: LazyLock<Mutex<FragmentPool>> = LazyLock::new(|| {
-    Mutex::new(FragmentPool::new())
-});
+static FRAGMENT_POOL: LazyLock<Mutex<FragmentPool>> =
+    LazyLock::new(|| Mutex::new(FragmentPool::new()));
 
 pub fn buffer_count_to_memory(count: u32) -> u32 {
     count * FRAGMENT_SIZE as u32
@@ -103,9 +102,7 @@ pub fn buffer_count_to_memory(count: u32) -> u32 {
 // functions are reentrant.
 impl FragmentPool {
     const fn new() -> FragmentPool {
-        FragmentPool {
-            free_list: None,
-        }
+        FragmentPool { free_list: None }
     }
 
     // Add new nodes to fragment pool. These are individually heap allocated.
@@ -254,14 +251,20 @@ impl NetBuffer {
     /// This is used for reading header contents. Note: this slice may be larger
     /// than the size passed to add_header.
     pub fn header(&self) -> &[u8] {
-        assert!(self.fragments.is_some(), "Shouldn't call header on empty buffer");
+        assert!(
+            self.fragments.is_some(),
+            "Shouldn't call header on empty buffer"
+        );
         let head_frag = self.fragments.as_ref().unwrap();
         &head_frag.data[head_frag.range.clone()]
     }
 
     /// Same as header, but mutable. Used for writing the header.
     pub fn header_mut(&mut self) -> &mut [u8] {
-        assert!(self.fragments.is_some(), "Shouldn't call header on empty buffer");
+        assert!(
+            self.fragments.is_some(),
+            "Shouldn't call header on empty buffer"
+        );
         let head_frag = self.fragments.as_mut().unwrap();
         &mut head_frag.data[head_frag.range.clone()]
     }
@@ -275,7 +278,10 @@ impl NetBuffer {
     /// layer, so this is called by each one as a packet is being prepared
     /// to send.
     pub fn alloc_header(&mut self, size: usize) {
-        assert!(size <= FRAGMENT_SIZE, "Header can't be larger than a fragment");
+        assert!(
+            size <= FRAGMENT_SIZE,
+            "Header can't be larger than a fragment"
+        );
         if self.fragments.is_none() || self.fragments.as_ref().unwrap().range.start < size {
             // Prepend a new frag. We place the data at the end of the frag
             // to allow space for subsequent headers to be added.
@@ -306,7 +312,10 @@ impl NetBuffer {
     pub fn trim_head(&mut self, size: usize) {
         // This condition suggests a logic error somewhere else in the
         // code, thus better to just assert than silently ignore.
-        assert!(size <= self.len(), "Should not trim more than buffer length");
+        assert!(
+            size <= self.len(),
+            "Should not trim more than buffer length"
+        );
 
         let mut remaining = size;
 
@@ -345,7 +354,6 @@ impl NetBuffer {
             size <= self.len(),
             "Should not trim more than buffer length"
         );
-
 
         if size == self.len() {
             // Remove all data
@@ -414,10 +422,7 @@ impl NetBuffer {
         let mut data_offset = 0;
         while data_offset < data.len() {
             let frag = last_frag.as_mut().unwrap();
-            let copy_len = cmp::min(
-                FRAGMENT_SIZE - frag.range.end,
-                data.len() - data_offset
-            );
+            let copy_len = cmp::min(FRAGMENT_SIZE - frag.range.end, data.len() - data_offset);
             frag.data[frag.range.end..frag.range.end + copy_len]
                 .copy_from_slice(&data[data_offset..data_offset + copy_len]);
             frag.range.end += copy_len;
@@ -441,8 +446,7 @@ impl NetBuffer {
         while copied < total_to_copy {
             let slice = iter.next().unwrap();
             let copy_len = cmp::min(slice.len(), total_to_copy - copied);
-            dest[copied..(copied + copy_len)]
-                .copy_from_slice(&slice[..copy_len]);
+            dest[copied..(copied + copy_len)].copy_from_slice(&slice[..copy_len]);
             copied += copy_len;
         }
 
@@ -487,7 +491,10 @@ impl<'a> Iterator for BufferIterator<'a> {
 
         let frag = self.current_frag.as_ref().unwrap();
         let slice_length = cmp::min(frag.len(), self.remaining);
-        assert!(self.remaining >= slice_length, "Should not copy more than remaining");
+        assert!(
+            self.remaining >= slice_length,
+            "Should not copy more than remaining"
+        );
         let start_offs = frag.range.start;
         let slice = &frag.data[start_offs..start_offs + slice_length];
         self.remaining -= slice_length;
@@ -511,7 +518,10 @@ mod tests {
             let frag = ptr.as_ref().unwrap();
             // Should be non-empty and these shouldn't cross
             assert!(frag.range.start < frag.range.end, "Invalid fragment range");
-            assert!(frag.range.end <= super::FRAGMENT_SIZE, "Fragment range too large");
+            assert!(
+                frag.range.end <= super::FRAGMENT_SIZE,
+                "Fragment range too large"
+            );
             actual_length += frag.range.end - frag.range.start;
             ptr = &frag.next;
         }

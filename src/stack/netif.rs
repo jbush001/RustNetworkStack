@@ -43,7 +43,8 @@ pub fn init() {
     unsafe {
         tun_init();
         LOCAL_IPV4 = util::IPAddr::new_from(&[10, 0, 0, 2]);
-        LOCAL_IPV6 = util::IPAddr::new_from(&[0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x2]);
+        LOCAL_IPV6 =
+            util::IPAddr::new_from(&[0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x2]);
     }
 }
 

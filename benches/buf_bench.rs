@@ -27,85 +27,103 @@ use netstack::buf;
 // A baseline of sorts that we can compare other calls to. Allocates
 // a single buffer then immediately frees it.
 pub fn prealloc_free(c: &mut Criterion) {
-    c.bench_function("prealloc_free", |b| b.iter(|| {
-        black_box(buf::NetBuffer::new_prealloc(512));
-    }));
+    c.bench_function("prealloc_free", |b| {
+        b.iter(|| {
+            black_box(buf::NetBuffer::new_prealloc(512));
+        })
+    });
 }
 
 pub fn copy_to_slice_small(c: &mut Criterion) {
     let buf = buf::NetBuffer::new_prealloc(512);
 
     let mut dst = [0; 512];
-    c.bench_function("copy_to_slice_small", |b| b.iter(|| {
-        buf.copy_to_slice(&mut dst);
-    }));
+    c.bench_function("copy_to_slice_small", |b| {
+        b.iter(|| {
+            buf.copy_to_slice(&mut dst);
+        })
+    });
 }
 
 pub fn copy_to_slice_large(c: &mut Criterion) {
     let buf = buf::NetBuffer::new_prealloc(0x10000);
 
     let mut dst = [0; 0x10000];
-    c.bench_function("copy_to_slice_large", |b| b.iter(|| {
-        buf.copy_to_slice(&mut dst);
-    }));
+    c.bench_function("copy_to_slice_large", |b| {
+        b.iter(|| {
+            buf.copy_to_slice(&mut dst);
+        })
+    });
 }
 
-
 pub fn alloc_header_fast(c: &mut Criterion) {
-    c.bench_function("alloc_header_fast", |b| b.iter(|| {
-        let mut buf = buf::NetBuffer::new();
-        for _ in 0..512 {
-            buf.alloc_header(1);
-        }
-    }));
+    c.bench_function("alloc_header_fast", |b| {
+        b.iter(|| {
+            let mut buf = buf::NetBuffer::new();
+            for _ in 0..512 {
+                buf.alloc_header(1);
+            }
+        })
+    });
 }
 
 pub fn alloc_header_slow(c: &mut Criterion) {
-    c.bench_function("alloc_header_slow", |b| b.iter(|| {
-        let mut buf = buf::NetBuffer::new();
-        for _ in 0..128 {
-            buf.alloc_header(512);
-        }
-    }));
+    c.bench_function("alloc_header_slow", |b| {
+        b.iter(|| {
+            let mut buf = buf::NetBuffer::new();
+            for _ in 0..128 {
+                buf.alloc_header(512);
+            }
+        })
+    });
 }
 
 pub fn trim_head(c: &mut Criterion) {
-    c.bench_function("trim_head", |b| b.iter(|| {
-        let mut buf = buf::NetBuffer::new_prealloc(0x10000);
-        for _ in 0..4096 {
-            buf.trim_head(16);
-        }
-    }));
+    c.bench_function("trim_head", |b| {
+        b.iter(|| {
+            let mut buf = buf::NetBuffer::new_prealloc(0x10000);
+            for _ in 0..4096 {
+                buf.trim_head(16);
+            }
+        })
+    });
 }
 
 pub fn trim_tail(c: &mut Criterion) {
-    c.bench_function("trim_tail", |b| b.iter(|| {
-        let mut buf = buf::NetBuffer::new_prealloc(0x10000);
-        for _ in 0..4096 {
-            buf.trim_tail(16);
-        }
-    }));
+    c.bench_function("trim_tail", |b| {
+        b.iter(|| {
+            let mut buf = buf::NetBuffer::new_prealloc(0x10000);
+            for _ in 0..4096 {
+                buf.trim_tail(16);
+            }
+        })
+    });
 }
 
 pub fn append_from_buffer_small(c: &mut Criterion) {
     let buf1 = buf::NetBuffer::new_prealloc(512);
 
-    c.bench_function("append_from_buffer_small", |b| b.iter(|| {
-        let mut buf2 = buf::NetBuffer::new();
-        buf2.append_from_buffer(&buf1, usize::MAX);
-    }));
+    c.bench_function("append_from_buffer_small", |b| {
+        b.iter(|| {
+            let mut buf2 = buf::NetBuffer::new();
+            buf2.append_from_buffer(&buf1, usize::MAX);
+        })
+    });
 }
 
 pub fn append_from_buffer_large(c: &mut Criterion) {
     let buf1 = buf::NetBuffer::new_prealloc(0x10000);
 
-    c.bench_function("append_from_buffer_large", |b| b.iter(|| {
-        let mut buf2 = buf::NetBuffer::new();
-        buf2.append_from_buffer(&buf1, usize::MAX);
-    }));
+    c.bench_function("append_from_buffer_large", |b| {
+        b.iter(|| {
+            let mut buf2 = buf::NetBuffer::new();
+            buf2.append_from_buffer(&buf1, usize::MAX);
+        })
+    });
 }
 
-criterion_group!(benches,
+criterion_group!(
+    benches,
     prealloc_free,
     copy_to_slice_small,
     copy_to_slice_large,

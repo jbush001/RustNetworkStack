@@ -14,45 +14,56 @@
 // limitations under the License.
 //
 
-use netstack::util;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use netstack::util;
 
 pub fn compute_ones_comp(c: &mut Criterion) {
     let buf = [0; 512];
-    c.bench_function("compute_ones_comp", |b| b.iter(|| {
-        black_box(util::compute_ones_comp(0, &buf));
-    }));
+    c.bench_function("compute_ones_comp", |b| {
+        b.iter(|| {
+            black_box(util::compute_ones_comp(0, &buf));
+        })
+    });
 }
 
 pub fn compute_buffer_ones_comp_small(c: &mut Criterion) {
     let buf = [0xff; 512];
-    c.bench_function("compute_buffer_ones_comp_small", |b| b.iter(|| {
-        black_box(util::compute_ones_comp(0, &buf));
-    }));
+    c.bench_function("compute_buffer_ones_comp_small", |b| {
+        b.iter(|| {
+            black_box(util::compute_ones_comp(0, &buf));
+        })
+    });
 }
 
 pub fn compute_buffer_ones_comp_large(c: &mut Criterion) {
     let buf = [0xff; 512];
-    c.bench_function("compute_buffer_ones_comp_large", |b| b.iter(|| {
-        black_box(util::compute_ones_comp(0, &buf));
-    }));
+    c.bench_function("compute_buffer_ones_comp_large", |b| {
+        b.iter(|| {
+            black_box(util::compute_ones_comp(0, &buf));
+        })
+    });
 }
 
 pub fn set_be16(c: &mut Criterion) {
     let mut buf = [0; 512];
-    c.bench_function("set_be16", |b| b.iter(|| {
-        util::set_be16(&mut buf, 0x1234);
-    }));
+    c.bench_function("set_be16", |b| {
+        b.iter(|| {
+            util::set_be16(&mut buf, 0x1234);
+        })
+    });
 }
 
 pub fn get_be32(c: &mut Criterion) {
     let buf = [0; 512];
-    c.bench_function("get_be32", |b| b.iter(|| {
-        black_box(util::get_be32(&buf));
-    }));
+    c.bench_function("get_be32", |b| {
+        b.iter(|| {
+            black_box(util::get_be32(&buf));
+        })
+    });
 }
 
-criterion_group!(benches,
+criterion_group!(
+    benches,
     compute_ones_comp,
     compute_buffer_ones_comp_small,
     compute_buffer_ones_comp_large,

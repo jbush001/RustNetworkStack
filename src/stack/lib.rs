@@ -14,14 +14,14 @@
 // limitations under the License.
 //
 
-pub mod icmp;
-pub mod tcp;
-pub mod udp;
-pub mod util;
 pub mod buf;
-mod timer;
+pub mod icmp;
 mod ip;
 mod netif;
+pub mod tcp;
+mod timer;
+pub mod udp;
+pub mod util;
 
 fn packet_receive_thread() {
     loop {
@@ -37,5 +37,3 @@ pub fn init_netstack() {
         packet_receive_thread();
     });
 }
-
-

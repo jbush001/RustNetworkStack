@@ -72,7 +72,6 @@ impl std::fmt::Display for IPAddr {
                         write!(f, ":")?;
                     }
 
-
                     if addr[i * 2..i * 2 + 2] != [0, 0] {
                         write!(f, "{:02x}{:02x}", addr[i * 2], addr[i * 2 + 1])?;
                     }
@@ -171,7 +170,11 @@ pub fn seq_ge(val1: u32, val2: u32) -> bool {
 }
 
 pub fn wrapping_max(val1: u32, val2: u32) -> u32 {
-    if seq_gt(val1, val2) { val1 } else { val2 }
+    if seq_gt(val1, val2) {
+        val1
+    } else {
+        val2
+    }
 }
 
 pub fn compute_pseudo_header_checksum(
@@ -251,7 +254,10 @@ pub static METRICS: Metrics = Metrics {
 pub fn print_metrics() {
     println!("Packets received: {}", METRICS.packets_received.get());
     println!("Packets sent: {}", METRICS.packets_sent.get());
-    println!("Packets retransmitted: {}", METRICS.packets_retransmitted.get());
+    println!(
+        "Packets retransmitted: {}",
+        METRICS.packets_retransmitted.get()
+    );
     println!("Buffers allocated: {}", METRICS.buffers_allocated.get());
     println!("Buffers freed: {}", METRICS.buffers_freed.get());
     println!("Buffers created: {}", METRICS.buffers_created.get());
@@ -260,7 +266,10 @@ pub fn print_metrics() {
     let current_memory = buf::buffer_count_to_memory(current_buf_inuse);
     let total_buffer_memory = buf::buffer_count_to_memory(METRICS.buffers_created.get());
     println!("Current buffer memory in use: {}k", current_memory / 1024);
-    println!("Total buffer memory allocated: {}k", total_buffer_memory / 1024);
+    println!(
+        "Total buffer memory allocated: {}k",
+        total_buffer_memory / 1024
+    );
 }
 
 mod tests {
@@ -372,9 +381,10 @@ mod tests {
     #[test]
     fn test_ip_to_str_v6() {
         assert_eq!(
-            super::IPAddr::new_from(
-                &[0x20u8, 0x1, 0x0d, 0xb8, 0xac, 0x10, 0xfe, 0x01, 0, 0, 0, 0, 0, 0, 0, 0]
-            ).to_string(),
+            super::IPAddr::new_from(&[
+                0x20u8, 0x1, 0x0d, 0xb8, 0xac, 0x10, 0xfe, 0x01, 0, 0, 0, 0, 0, 0, 0, 0
+            ])
+            .to_string(),
             "2001:0db8:ac10:fe01::::"
         );
     }
@@ -426,7 +436,10 @@ mod tests {
     fn test_compute_pseudo_header_checksum_v4() {
         let source_ip = super::IPAddr::new_from(&[192, 168, 1, 1]);
         let dest_ip = super::IPAddr::new_from(&[192, 168, 1, 2]);
-        assert_eq!(super::compute_pseudo_header_checksum(source_ip, dest_ip, 20, 6), 0x836e);
+        assert_eq!(
+            super::compute_pseudo_header_checksum(source_ip, dest_ip, 20, 6),
+            0x836e
+        );
     }
 
     #[test]
@@ -437,6 +450,9 @@ mod tests {
         let dest_ip = super::IPAddr::new_from(&[
             0x20, 0x01, 0x0d, 0xb8, 0xac, 0x10, 0xfe, 0x02, 0, 0, 0, 0, 0, 0, 0, 0,
         ]);
-        assert_eq!(super::compute_pseudo_header_checksum(source_ip, dest_ip, 20, 6), 0xafb2);
+        assert_eq!(
+            super::compute_pseudo_header_checksum(source_ip, dest_ip, 20, 6),
+            0xafb2
+        );
     }
 }
