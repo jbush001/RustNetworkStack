@@ -14,16 +14,24 @@
 // limitations under the License.
 //
 
+// Internet Control Message Protocol, as described in RFC 792 and RFC 4443
+
+// XXX This should send errors to the higher layer protocols
+// Right now it only supports pings.
+
 use crate::buf;
 use crate::ip;
 use crate::util;
 use crate::netif;
 
+// The header has the same layout for V4 and V6, but the type codes are
+// different.
+//
 //    0               1               2               3
 //    +---------------+---------------+-----+-------------------------+
 //  0 |     Type      |     Code      |          Checksum             |
 //    +---------------+---------------+-------------------------------+
-//  4 |                     Payload...                                |
+//  4 |                        Payload...                             |
 //    +---------------------------------------------------------------+
 
 const ICMPV4_ECHO_REQUEST: u8 = 8;

@@ -60,6 +60,7 @@ fn current_time_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// Create a timer that will call the given closure after some number of milliseconds.
 /// Returns a timer ID, which can be passed to cancel_timer to disable it.
 /// Valid timer IDs are always positive (this allows callers to use -1 to indicate
 /// no timer is pending).
@@ -80,6 +81,7 @@ where
     id
 }
 
+/// Try to cancel a pending timer, using the ID that was returned from set_timer.
 /// Returns true if the timer was already pending, false if had
 /// already expired.
 pub fn cancel_timer(timer_id: i32) -> bool {

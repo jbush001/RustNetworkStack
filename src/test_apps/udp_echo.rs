@@ -50,7 +50,7 @@ fn main() {
             return;
         }
 
-        util::print_stats();
+        util::print_metrics();
     }
 }
 

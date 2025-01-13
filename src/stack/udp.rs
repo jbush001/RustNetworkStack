@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+// User Datagram Protcol, as described in RFC 768
+
 use crate::buf;
 use crate::ip;
 use crate::netif;
@@ -57,6 +59,7 @@ impl UDPSocketState {
     }
 }
 
+/// Open a new UDP socket with the specified local port.
 pub fn udp_open(port: u16) -> Result<SocketReference, &'static str> {
     let mut port_map_guard = PORT_MAP.lock().unwrap();
     if port_map_guard.contains_key(&port) {
@@ -69,6 +72,8 @@ pub fn udp_open(port: u16) -> Result<SocketReference, &'static str> {
     Ok(socket_ref)
 }
 
+/// Wait for a UDP packet to arrive on the specified socket, copy its payload
+/// into the passed slice and return the number of bytes copied.
 pub fn udp_recv(
     socket_ref: &mut SocketReference,
     data: &mut [u8],
@@ -94,6 +99,7 @@ pub fn udp_recv(
     }
 }
 
+/// Send a UDP packet to the specified destination address and port.
 pub fn udp_send(
     socket_ref: &mut SocketReference,
     dest_addr: util::IPAddr,
@@ -118,6 +124,7 @@ pub fn udp_send(
 
 const UDP_HEADER_LEN: usize = 8;
 
+/// Called by IP layer to handle received packets.
 pub fn udp_input(mut packet: buf::NetBuffer, source_addr: util::IPAddr) {
     let header = packet.header();
     let source_port = util::get_be16(&header[0..2]);

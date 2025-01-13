@@ -20,11 +20,11 @@ use std::sync::{Mutex, LazyLock};
 use crate::util;
 
 //
-// This class implements an efficient, flexible container for unstructured
+// This module implements an efficient, flexible container for unstructured
 // data, which is used as temporary storage throughout the network stack,
 // including for packets and queued receive and transmit data. It is similar
-// to the mbuf in the BSD network stack or skbuff in Linux, although
-// this is implemented more idiomatically with Rust's ownership model.
+// to mbufs in the BSD network stack or skbuffs in Linux, although
+// this is implemented to be more idiomatic with Rust's ownership model.
 //
 // The design goals of any network buffering system are to minimize copies,
 // avoid external heap fragmentation, and optimize allocation speed. The
@@ -42,11 +42,17 @@ use crate::util;
 //   fragment, which would speed up appends, but the performance improvement
 //   might be minimal and doesn't seem to justify giving up Rust safety
 //   guarantees.
+// - Making the fragments be ref counted would allow zero-copy sharing (for
+//   example, when copying into the retransmit buffer), but it would likely
+//   require fragments to be immutable, which would lead to more internal
+//   fragmentation when adding headers, for example.
 //
 
 type FragPointer = Option<Box<BufferFragment>>;
 
-// This is the publicly visible abstraction for clients of this API.
+/// A NetBuffer is the primary buffer abstraction. It is a variable sized
+/// container for octets of data that can be grown or shrunk arbitrarily
+/// without copies. NetBuffers are mutable.
 pub struct NetBuffer {
     fragments: FragPointer, // Head of linked list of fragments
 
@@ -59,13 +65,12 @@ pub struct NetBuffer {
 const FRAGMENT_SIZE: usize = 512;
 
 /// Portion of a buffer, which is a node in a linked list.
-///
-/// It seems a bit wasteful to store start and end as 64-bit integers,
-/// But keeping these consistent avoids a lot of typecasting in other
-/// parts (since most other building slice functions use usize)
-/// I tried using smaller storage sizes for these and it had no
-/// measurable performance impact.
 struct BufferFragment {
+    // It seems a bit wasteful to store start and end as 64-bit integers,
+    // But keeping these consistent avoids a lot of typecasting in other
+    // parts (since most other building slice functions use usize)
+    // I tried using smaller storage sizes for these and it had no
+    // measurable performance impact.
     next: FragPointer, // Next fragment in linked list.
     range: Range<usize>, // Start and end of valid data in this fragment.
     data: [u8; FRAGMENT_SIZE],
@@ -94,8 +99,8 @@ pub fn buffer_count_to_memory(count: u32) -> u32 {
     count * FRAGMENT_SIZE as u32
 }
 
-/// Note that this instance is protected by an external mutex, so none of these
-/// functions are reentrant.
+// Note that this instance is protected by an external mutex, so none of these
+// functions are reentrant.
 impl FragmentPool {
     const fn new() -> FragmentPool {
         FragmentPool {
@@ -117,7 +122,7 @@ impl FragmentPool {
             self.free_list.replace(frag);
         }
 
-        util::STATS.buffers_created.add(POOL_GROW_SIZE as u32);
+        util::METRICS.buffers_created.add(POOL_GROW_SIZE as u32);
     }
 
     /// Allocate a new fragment from the pool.
@@ -126,7 +131,7 @@ impl FragmentPool {
             self.grow();
         }
 
-        util::STATS.buffers_allocated.inc();
+        util::METRICS.buffers_allocated.inc();
 
         let mut new_frag = self.free_list.take().unwrap();
         if new_frag.next.is_some() {
@@ -144,7 +149,7 @@ impl FragmentPool {
     /// unstable and not fully supported.
     /// Note also that we never return fragments to the system allocator.
     fn free(&mut self, mut fragment: Box<BufferFragment>) {
-        util::STATS.buffers_freed.inc();
+        util::METRICS.buffers_freed.inc();
         fragment.next = self.free_list.take();
         self.free_list.replace(fragment);
     }
@@ -174,8 +179,8 @@ impl Drop for BufferFragment {
 }
 
 impl Drop for NetBuffer {
-    /// When a NetBuffer goes away, ensure all of its fragments go back into the
-    /// pool.
+    /// When a NetBuffer goes out of scope, all of its data will be returned to
+    /// the allocator pool.
     fn drop(&mut self) {
         let mut frag = self.fragments.take();
         let mut guard = FRAGMENT_POOL.lock().unwrap();
@@ -188,12 +193,14 @@ impl Drop for NetBuffer {
 }
 
 impl Default for NetBuffer {
+    /// Returns an empty buffer.
     fn default() -> NetBuffer {
         NetBuffer::new()
     }
 }
 
 impl NetBuffer {
+    /// Create a new NetBuffer that has no data in it.
     pub const fn new() -> NetBuffer {
         NetBuffer {
             fragments: None,
@@ -201,8 +208,9 @@ impl NetBuffer {
         }
     }
 
+    /// Create a buffer of a specific length that is zero filled.
     /// This function is used by the underlying interface during packet
-    /// reception. It isn't really useful for much else.
+    /// reception and isn't really useful for much else.
     pub fn new_prealloc(length: usize) -> NetBuffer {
         let mut buf = NetBuffer {
             fragments: None,
@@ -223,18 +231,18 @@ impl NetBuffer {
         buf
     }
 
-    /// Return the total available data within this buffer
-    /// (which may be smaller than the allocated capacity)
+    /// Return the total number of octets contained within this buffer
     pub fn len(&self) -> usize {
         self.length
     }
 
+    /// Returns true if this contains no data.
     pub fn is_empty(&self) -> bool {
         self.length == 0
     }
 
-    /// Return an iterator that will walk through the fragments in the buffer and
-    /// return a slice for each.
+    /// Return an iterator that will return slices that represent portions
+    /// of the data in this buffer.
     pub fn iter(&self, length: usize) -> BufferIterator {
         BufferIterator {
             current_frag: &self.fragments,
@@ -242,9 +250,9 @@ impl NetBuffer {
         }
     }
 
-    /// Return a slice pointing to data in the initial fragment of the buffer.
+    /// Return a slice pointing to data in the beginning of the buffer.
     /// This is used for reading header contents. Note: this slice may be larger
-    /// than the size returned by add_header.
+    /// than the size passed to add_header.
     pub fn header(&self) -> &[u8] {
         assert!(self.fragments.is_some(), "Shouldn't call header on empty buffer");
         let head_frag = self.fragments.as_ref().unwrap();
@@ -259,13 +267,13 @@ impl NetBuffer {
     }
 
     /// Reserve space for another header to be prepended to the buffer
-    /// The network stack calls the protocol modules from highest to lowest
-    /// layer, so this is called by each one as a packet is being prepared
-    /// to send.
-    ///
     /// This method guarantees the header is always contiguous (i.e. does not
     /// span multiple fragments). The contents of the allocated space will be
     /// zeroed out.
+    ///
+    /// The network stack calls the protocol modules from highest to lowest
+    /// layer, so this is called by each one as a packet is being prepared
+    /// to send.
     pub fn alloc_header(&mut self, size: usize) {
         assert!(size <= FRAGMENT_SIZE, "Header can't be larger than a fragment");
         if self.fragments.is_none() || self.fragments.as_ref().unwrap().range.start < size {
@@ -294,7 +302,7 @@ impl NetBuffer {
         self.length += size;
     }
 
-    /// Remove data from the beginning of buffer.
+    /// Remove the passed number of octets from the beginning of buffer.
     pub fn trim_head(&mut self, size: usize) {
         // This condition suggests a logic error somewhere else in the
         // code, thus better to just assert than silently ignore.
@@ -329,6 +337,7 @@ impl NetBuffer {
         );
     }
 
+    /// Return the passed number of octets from the end of the buffer.
     pub fn trim_tail(&mut self, size: usize) {
         // This generally suggests a logic error somewhere else in the
         // code, thus better to just assert than silently ignore.
@@ -381,7 +390,8 @@ impl NetBuffer {
         }
     }
 
-    /// Add all data in the passed slice to the end of this buffer.
+    /// Allocate space in the end of the buffer and copy data from the passed slice
+    /// to it.
     pub fn append_from_slice(&mut self, data: &[u8]) {
         if data.is_empty() {
             return;
@@ -451,8 +461,7 @@ impl NetBuffer {
     }
 
     /// This just takes over data from another buffer, tacking it onto the
-    /// end. Rust's move semantics kind of shine here, because this
-    /// takes over the storage with no copies.
+    /// end.
     pub fn append_buffer(&mut self, mut other: NetBuffer) {
         self.length += other.length;
         if self.fragments.is_none() {

@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+// Internet Protocol as described in RFC 791
+
 use crate::buf;
 use crate::icmp;
 use crate::netif;
@@ -41,7 +43,7 @@ pub fn ip_input(packet: buf::NetBuffer) {
     } else if version == 6 {
         ip_input_v6(packet);
     } else {
-        println!("IP: Unsupported version");
+        println!("IP: Invalid version field");
     }
 }
 

@@ -14,9 +14,6 @@
 // limitations under the License.
 //
 
-// This one probably shouldn't be public, but it is because apps use the
-// function to print the buffer allocation stats. Perhaps refactor that.
-
 pub mod icmp;
 pub mod tcp;
 pub mod udp;

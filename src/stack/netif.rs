@@ -76,7 +76,7 @@ pub fn recv_packet() -> buf::NetBuffer {
     }
 
     packet.trim_tail(packet.len() - result as usize);
-    util::STATS.packets_received.inc();
+    util::METRICS.packets_received.inc();
 
     packet
 }
@@ -93,7 +93,7 @@ pub fn send_packet(packet: buf::NetBuffer) {
         std::process::exit(1);
     }
 
-    util::STATS.packets_sent.inc();
+    util::METRICS.packets_sent.inc();
 }
 
 pub fn get_ipaddr() -> (util::IPAddr, util::IPAddr) {

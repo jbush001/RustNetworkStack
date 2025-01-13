@@ -15,6 +15,8 @@
 //
 
 // Transmission Control Protocol, as described in RFC 9293
+// This is missing a lot of features, such as slow start, silly window syndrome
+// avoidance, Nagle's algorithm, and RTT time estimation.
 
 use crate::buf;
 use crate::ip;
@@ -72,6 +74,7 @@ struct TCPSocketState {
     state: TCPState,
 
     // Receive
+    // Variable names from RFC 9293, 3.3.1 are noted here.
     // ----------|----------|----------
     //        RCV.NXT    RCV.NXT
     //                  +RCV.WND
@@ -83,7 +86,6 @@ struct TCPSocketState {
     num_delayed_acks: u32,
 
     // Send
-    // Variable names from RFC 9293, 3.3.1
     //
     // ----------|----------|----------|----------
     //        SND.UNA    SND.NXT    SND.UNA
@@ -133,7 +135,7 @@ impl TCPSocket {
     }
 }
 
-/// Each socket is uniquely identified by the tuple of remote_ip/remote_port/local_port
+// Each socket is uniquely identified by the tuple of remote_ip/remote_port/local_port
 type SocketKey = (util::IPAddr, u16, u16);
 type PortMap = HashMap<SocketKey, SocketReference>;
 
@@ -156,6 +158,9 @@ fn find_ephemeral_port(
     }
 }
 
+/// Connect to a host given a remote IP address and port number.
+/// This function will block until the connection is established.
+/// Returns a reference to the socket or a string describing the error if it couldn't connect.
 pub fn tcp_open(
     remote_ip: util::IPAddr,
     remote_port: u16,
@@ -186,6 +191,9 @@ pub fn tcp_open(
     Ok(socket_ref)
 }
 
+/// Disconnect the passed socket. This technically only disconnects
+/// the send direction and it is still possible to read from it (which
+/// is how the spec is defined).
 pub fn tcp_close(socket_ref: &mut SocketReference) {
     let (mut guard, _) = (*socket_ref).lock();
 
@@ -217,6 +225,10 @@ pub fn tcp_close(socket_ref: &mut SocketReference) {
     }
 }
 
+/// If there is data available in the socket, copy it into the data slice.
+/// If not, block until there is.
+/// This will not necessarily read the full size of the slice. It will return how
+/// much data is available, or a negative number if the socket is closed.
 pub fn tcp_read(socket_ref: &mut SocketReference, data: &mut [u8]) -> i32 {
     let (mut guard, cond) = (*socket_ref).lock();
 
@@ -235,6 +247,7 @@ pub fn tcp_read(socket_ref: &mut SocketReference, data: &mut [u8]) -> i32 {
     }
 }
 
+/// Write data to the socket. This will block until the data is sent.
 pub fn tcp_write(socket_ref: &mut SocketReference, data: &[u8]) -> i32 {
     let (mut guard, cond) = (*socket_ref).lock();
 
@@ -285,6 +298,7 @@ pub fn tcp_write(socket_ref: &mut SocketReference, data: &[u8]) -> i32 {
     data.len() as i32
 }
 
+/// Open a socket and listen for incoming connections on the specified port.
 pub fn tcp_listen(port: u16) -> Result<SocketReference, &'static str> {
     let socket_ref = Arc::new(TCPSocket::new(util::IPAddr::new(), 0, port));
 
@@ -303,6 +317,7 @@ pub fn tcp_listen(port: u16) -> Result<SocketReference, &'static str> {
     Ok(socket_ref)
 }
 
+/// Wait for an incoming connection on a listening socket, then return a new socket.
 pub fn tcp_accept(socket_ref: &mut SocketReference) -> Result<SocketReference, &'static str>{
     let (mut guard, cond) = (*socket_ref).lock();
 
@@ -320,7 +335,7 @@ fn retransmit(socket_ref: SocketReference) {
         return;
     }
 
-    util::STATS.packets_retransmitted.inc();
+    util::METRICS.packets_retransmitted.inc();
 
     if !guard.retransmit_queue.is_empty() {
         println!("Retransmitting sequence {}", guard.send_next_seq);
@@ -526,6 +541,7 @@ const TCP_HEADER_LEN: usize = 20;
 //    +---------------------------------------------------------------+
 //
 
+/// Called by IP layer to handle received packets.
 pub fn tcp_input(mut packet: buf::NetBuffer, source_ip: util::IPAddr) {
     if !validate_checksum(&packet, source_ip) {
         println!("TCP checksum error");

@@ -73,5 +73,5 @@ fn main() {
     // Wait a spell to see what other things come in.
     sleep(Duration::from_secs(5));
 
-    util::print_stats();
+    util::print_metrics();
 }

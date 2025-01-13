@@ -18,6 +18,7 @@ use crate::buf;
 use std::convert::TryInto;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+/// Internet protocol address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IPAddr {
     V4([u8; 4]),
@@ -228,7 +229,7 @@ impl Default for PerfCounter {
     }
 }
 
-pub struct Statistics {
+pub struct Metrics {
     pub packets_received: PerfCounter,
     pub packets_sent: PerfCounter,
     pub packets_retransmitted: PerfCounter,
@@ -237,7 +238,7 @@ pub struct Statistics {
     pub buffers_created: PerfCounter,
 }
 
-pub static STATS: Statistics = Statistics {
+pub static METRICS: Metrics = Metrics {
     packets_received: PerfCounter::new(),
     packets_sent: PerfCounter::new(),
     packets_retransmitted: PerfCounter::new(),
@@ -246,17 +247,18 @@ pub static STATS: Statistics = Statistics {
     buffers_created: PerfCounter::new(),
 };
 
-pub fn print_stats() {
-    println!("Packets received: {}", STATS.packets_received.get());
-    println!("Packets sent: {}", STATS.packets_sent.get());
-    println!("Packets retransmitted: {}", STATS.packets_retransmitted.get());
-    println!("Buffers allocated: {}", STATS.buffers_allocated.get());
-    println!("Buffers freed: {}", STATS.buffers_freed.get());
-    println!("Buffers created: {}", STATS.buffers_created.get());
+/// Prints memory and performance related metrics about the stack.
+pub fn print_metrics() {
+    println!("Packets received: {}", METRICS.packets_received.get());
+    println!("Packets sent: {}", METRICS.packets_sent.get());
+    println!("Packets retransmitted: {}", METRICS.packets_retransmitted.get());
+    println!("Buffers allocated: {}", METRICS.buffers_allocated.get());
+    println!("Buffers freed: {}", METRICS.buffers_freed.get());
+    println!("Buffers created: {}", METRICS.buffers_created.get());
 
-    let current_buf_inuse = STATS.buffers_allocated.get() - STATS.buffers_freed.get();
+    let current_buf_inuse = METRICS.buffers_allocated.get() - METRICS.buffers_freed.get();
     let current_memory = buf::buffer_count_to_memory(current_buf_inuse);
-    let total_buffer_memory = buf::buffer_count_to_memory(STATS.buffers_created.get());
+    let total_buffer_memory = buf::buffer_count_to_memory(METRICS.buffers_created.get());
     println!("Current buffer memory in use: {}k", current_memory / 1024);
     println!("Total buffer memory allocated: {}k", total_buffer_memory / 1024);
 }
