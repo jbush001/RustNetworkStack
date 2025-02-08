@@ -346,7 +346,7 @@ impl NetBuffer {
         );
     }
 
-    /// Return the passed number of octets from the end of the buffer.
+    /// Remove the passed number of octets from the end of the buffer.
     pub fn trim_tail(&mut self, size: usize) {
         // This generally suggests a logic error somewhere else in the
         // code, thus better to just assert than silently ignore.
@@ -508,7 +508,7 @@ impl<'a> Iterator for BufferIterator<'a> {
 mod tests {
     // At one point, I would check at the end of each of these tests if all
     // buffers were freed, but that would fail intermittently. It turns out
-    // Rust runs unit tests in parallel.
+    // Rust runs unit tests in parallel in multiple threads.
 
     // Walk through the buffer to ensure it is correctly formed.
     fn validate_buffer(buf: &super::NetBuffer) {
