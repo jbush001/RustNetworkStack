@@ -32,21 +32,6 @@ use std::sync::{LazyLock, Mutex};
 // chained together to allow buffers to grow to arbitrary sizes. Fragments
 // are allocated from a memory pool of fixed sized chunks, which is fast.
 //
-// Alternatives:
-// - I also considered having NetBuffer contain an array of pointers
-//   to fragments, which would be faster for some use cases and simpler,
-//   However, this would limit the size of buffers (in lieu of reallocating
-//   the array dynamically, which has its own issues).
-// - Another design choice would be to use raw pointers to the fragments rather
-//   than a Box. This would allow the NetBuffer to have a pointer to the tail
-//   fragment, which would speed up appends, but the performance improvement
-//   might be minimal and doesn't seem to justify giving up Rust safety
-//   guarantees.
-// - Making the fragments be ref counted would allow zero-copy sharing (for
-//   example, when copying into the retransmit buffer), but it would likely
-//   require fragments to be immutable, which would lead to more internal
-//   fragmentation when adding headers, for example.
-//
 
 type FragPointer = Option<Box<BufferFragment>>;
 
@@ -66,11 +51,6 @@ const FRAGMENT_SIZE: usize = 512;
 
 /// Portion of a buffer, which is a node in a linked list.
 struct BufferFragment {
-    // It seems a bit wasteful to store start and end as 64-bit integers,
-    // But keeping these consistent avoids a lot of typecasting in other
-    // parts (since most other building slice functions use usize)
-    // I tried using smaller storage sizes for these and it had no
-    // measurable performance impact.
     next: FragPointer,   // Next fragment in linked list.
     range: Range<usize>, // Start and end of valid data in this fragment.
     data: [u8; FRAGMENT_SIZE],
@@ -83,7 +63,9 @@ pub struct BufferIterator<'a> {
 
 /// This is where fragments are allocated from (and return to). Free fragments
 /// are stored in a single linked list, which makes allocation and deallocation
-/// fast.
+/// fast (we never release them to the general allocator, so this module needs
+/// to handle allocation and deallocation manually, but this is hidden from
+//. users of the NetBuffer API).
 struct FragmentPool {
     free_list: FragPointer,
 }
